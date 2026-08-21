@@ -1,6 +1,7 @@
 package store
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -247,8 +248,9 @@ func TestResolveWalksUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if !strings.HasSuffix(got, "/.solstice/work.db") {
-		t.Fatalf("resolve = %q", got)
+	want := filepath.Join(dir, DirName, FileName)
+	if got != want {
+		t.Fatalf("resolve = %q, want %q", got, want)
 	}
 }
 
