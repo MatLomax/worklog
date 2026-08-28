@@ -104,7 +104,7 @@ markdown rendering is derived from them, never the source of truth.
 
 This repo is the **client-agnostic tool** — the Go binary and its tests. The
 Claude Code integration ships separately as a **plugin** in the
-[`MatLomax/claude-skills`](https://github.com/MatLomax/claude-skills)
+[`MatLomax/claude-plugins`](https://github.com/MatLomax/claude-plugins)
 marketplace (`plugins/worklog/`), bundling the three integration pieces — the
 MCP server (`.mcp.json`), the SessionStart/Stop hooks (`hooks/hooks.json`), and
 a `/worklog:init` command — so one `/plugin install` replaces all the manual

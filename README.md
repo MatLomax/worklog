@@ -52,14 +52,14 @@ database into every project you open.
 ### Claude Code (plugin)
 
 worklog ships as a Claude Code **plugin** — distributed through the
-[`MatLomax/claude-skills`](https://github.com/MatLomax/claude-skills)
+[`MatLomax/claude-plugins`](https://github.com/MatLomax/claude-plugins)
 marketplace — that wires up the MCP server, the warm-load/session hooks, and a
 `/worklog:init` command in one install. The plugin is pure glue: it expects the
 `worklog` binary on your PATH (see Install).
 
 ```
-/plugin marketplace add MatLomax/claude-skills
-/plugin install worklog@claude-skills --scope project
+/plugin marketplace add MatLomax/claude-plugins
+/plugin install worklog@matlomax --scope project
 ```
 
 Then, in each project you want tracked:
