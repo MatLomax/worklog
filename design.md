@@ -124,6 +124,6 @@ its session on disconnect, no hook required.
 ## Non-goals
 
 Not multi-user, not networked, not a shared source of truth. Not a replacement
-for the human-facing `.worklog/*.md` notes — those stay. Binary databases are
-not committed; the durable narrative for humans lives in the markdown, and
-worklog is the agent's rebuildable working record.
+for a project's own human-facing docs — those stay where they are. The database
+is gitignored, not committed; worklog is the agent's rebuildable working record,
+and anything a human needs to keep lives in the project's own documentation.
