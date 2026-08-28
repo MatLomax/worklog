@@ -112,7 +112,7 @@ func TestToolCallRoundTrip(t *testing.T) {
 }
 
 func TestAttachOnlyUntilInit(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".solstice", "work.db")
+	path := filepath.Join(t.TempDir(), ".worklog", "tasks.db")
 	s := &Server{dbPath: path, out: bufio.NewWriter(io.Discard)}
 
 	// No database yet: tools are inert and point at init, and nothing is created.

@@ -36,7 +36,7 @@ func (s *Store) RemoveDep(slug, blockerSlug string) error {
 
 // ActiveBlockers returns the tasks still blocking the given task — those
 // dependency targets that are not yet closed. A done or dropped dependency no
-// longer blocks and is omitted, matching solstice's rule.
+// longer blocks and is omitted.
 func (s *Store) ActiveBlockers(taskID int64) ([]Task, error) {
 	rows, err := s.db.Query(
 		taskCols+` INNER JOIN dep ON dep.blocked_by_id = task.id

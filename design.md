@@ -12,20 +12,19 @@ answer — what was decided and done, retrievable later.
 worklog is the record that sits between the ephemeral task list and the prose
 notes. It is the agent's working record, not a document for humans to maintain.
 
-## Lineage
+## Approach
 
-The task model is adapted from [solstice](../solstice)'s CouchDB task system —
-its tree, blocking edges, priority/position ordering, and section-addressable
-markdown bodies are proven and worth keeping. worklog reuses that **design**,
-reimplemented on SQLite, and deliberately drops solstice's milestones,
-workstreams, semver sorting, and orchestrator coupling — none of which serve a
-single developer tracking local work. It **adds** two things solstice lacks:
-first-class **links** (GitHub issues/PRs by full URL) and first-class
-**decisions**, plus a per-session **journal**.
+The task model is a **tree** — tasks nest via `parent_id` — with **blocking
+edges** between them, priority/position ordering, and section-addressable
+markdown bodies, all on SQLite. Deliberately absent are milestones, workstreams,
+semver sorting, and any orchestrator coupling — none serve a single developer
+tracking local work. On top of the tree it adds first-class **links** (GitHub
+issues/PRs by full URL) and first-class **decisions**, plus a per-session
+**journal**.
 
-An earlier take (the JJO migration tracker) put this kind of tracker on a shared
-Postgres instance. worklog is the opposite choice on purpose: **local,
-single-writer-ish, zero-install**, one file per project.
+It is **local, single-writer-ish, zero-install** — one file per project — rather
+than a shared server: the working record belongs with the project, not in a
+central instance.
 
 ## Stack
 
@@ -40,7 +39,7 @@ single-writer-ish, zero-install**, one file per project.
 
 ## Data model
 
-`.solstice/work.db`, WAL-mode so concurrent sessions sharing a tree don't
+`.worklog/tasks.db`, WAL-mode so concurrent sessions sharing a tree don't
 clobber each other. Six tables:
 
 - **task** — `id, slug, parent_id, title, body_md, status, priority, position,
@@ -67,7 +66,7 @@ markdown rendering is derived from them, never the source of truth.
 
 ## Semantics worth stating
 
-- **Blocking (from solstice):** a task is actively blocked if it has a
+- **Blocking:** a task is actively blocked if it has a
   dependency that is not yet closed, or an explicit `blocked` status. Closing a
   dependency (`done`/`dropped`) automatically unblocks its dependents — a closed
   blocker is omitted from the dependent's blocker list.
@@ -84,7 +83,7 @@ markdown rendering is derived from them, never the source of truth.
 - **Attach-only serve:** `worklog serve` opens an existing database but never
   creates one — creation is `worklog init`'s job alone. This is what keeps a
   globally-installed server (see Distribution) inert in every project until it
-  is explicitly initialized, instead of seeding a stray `.solstice/work.db` into
+  is explicitly initialized, instead of seeding a stray `.worklog/tasks.db` into
   every project a session opens. The server attaches lazily (per tool call), so
   running `init` mid-session lights up the tools without a restart. Under a
   plugin the project is resolved from `$CLAUDE_PROJECT_DIR`, since a plugin MCP
@@ -125,6 +124,6 @@ its session on disconnect, no hook required.
 ## Non-goals
 
 Not multi-user, not networked, not a shared source of truth. Not a replacement
-for the human-facing `.solstice/*.md` notes — those stay. Binary databases are
+for the human-facing `.worklog/*.md` notes — those stay. Binary databases are
 not committed; the durable narrative for humans lives in the markdown, and
 worklog is the agent's rebuildable working record.

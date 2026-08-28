@@ -243,7 +243,7 @@ func TestWarmContext(t *testing.T) {
 
 func TestResolveWalksUp(t *testing.T) {
 	dir := t.TempDir()
-	// No .solstice anywhere: resolves to dir/.solstice/work.db.
+	// No .worklog anywhere: resolves to dir/.worklog/tasks.db.
 	got, err := Resolve(dir)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)

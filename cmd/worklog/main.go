@@ -54,13 +54,13 @@ func usage() {
 
 usage:
   worklog serve   [--db PATH]        run the MCP server over stdio
-  worklog init    [--dir DIR]        create .solstice/work.db for a project
+  worklog init    [--dir DIR]        create .worklog/tasks.db for a project
   worklog context [--db PATH] [-n N] print the "where was I" briefing (for a SessionStart hook)
   worklog session-end [--summary S]  close the current session (for a Stop hook)
   worklog version
 
 The database is resolved from the current directory: the nearest ancestor
-`+"`.solstice/`"+` directory, else `+"`./.solstice/work.db`"+`. Override with --db or $WORKLOG_DB.
+`+"`.worklog/`"+` directory, else `+"`./.worklog/tasks.db`"+`. Override with --db or $WORKLOG_DB.
 `)
 }
 

@@ -7,7 +7,7 @@
 A per-project, SQLite-backed **task and decision log for AI coding agents**,
 exposed over MCP so work is remembered across sessions. One static binary, no
 runtime, no server to run, no cloud — the database is a single file in your
-project's `.solstice/` directory.
+project's `.worklog/` directory.
 
 It tracks not just *what needs doing* but *what was done and why*: every task
 carries its blocking dependencies, the GitHub issues/PRs it touches, the
@@ -35,12 +35,12 @@ macOS — SQLite is compiled in (pure-Go `modernc.org/sqlite`, no cgo).
 
 ```sh
 cd your-project
-worklog init          # creates ./.solstice/work.db (idempotent)
+worklog init          # creates ./.worklog/tasks.db (idempotent)
 ```
 
 The database is resolved as `--db` / `$WORKLOG_DB` / `$CLAUDE_PROJECT_DIR` /
-current directory — walking up to the nearest ancestor `.solstice/`, else
-`./.solstice/work.db`. It's local, gitignored working state — not committed.
+current directory — walking up to the nearest ancestor `.worklog/`, else
+`./.worklog/tasks.db`. It's local, gitignored working state — not committed.
 
 The MCP server is **attach-only**: it opens an existing database but never
 creates one. So a globally-installed worklog stays inert in any project until
@@ -65,7 +65,7 @@ marketplace — that wires up the MCP server, the warm-load/session hooks, and a
 Then, in each project you want tracked:
 
 ```
-/worklog:init          # creates .solstice/work.db (idempotent)
+/worklog:init          # creates .worklog/tasks.db (idempotent)
 ```
 
 Because the server is attach-only, the globally-installed plugin does nothing in
@@ -132,7 +132,7 @@ Codex has no SessionStart-style context hook, so to warm-load either call
 
 ```
 worklog serve       [--db PATH]        run the MCP server over stdio
-worklog init        [--dir DIR]        create .solstice/work.db
+worklog init        [--dir DIR]        create .worklog/tasks.db
 worklog context     [--db PATH] [-n N] print the "where was I" briefing
 worklog session-end [--summary S]      close the current session
 worklog version

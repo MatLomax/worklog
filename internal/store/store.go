@@ -1,5 +1,5 @@
 // Package store is worklog's persistence layer: a per-project SQLite database
-// (`.solstice/work.db`) holding the task tree, its blocking edges, and the
+// (`.worklog/tasks.db`) holding the task tree, its blocking edges, and the
 // durable record of what was decided and done across agent sessions.
 package store
 
@@ -14,12 +14,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// DirName is the per-project directory that holds the database, reusing the
-// existing `.solstice/` convention.
-const DirName = ".solstice"
+// DirName is the per-project directory that holds the database.
+const DirName = ".worklog"
 
 // FileName is the database file within DirName.
-const FileName = "work.db"
+const FileName = "tasks.db"
 
 // ErrNotFound is returned when a task or other record does not exist.
 var ErrNotFound = errors.New("not found")
