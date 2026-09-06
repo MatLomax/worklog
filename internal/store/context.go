@@ -78,6 +78,23 @@ func (s *Store) WarmContext(journalLimit int) (string, error) {
 	return b.String(), nil
 }
 
+// NextLine renders the single highest-priority actionable task as a one-line
+// notice, for a visible session-start message. It returns "" when nothing is
+// actionable, so a caller emits nothing rather than an empty banner.
+func (s *Store) NextLine() (string, error) {
+	next, err := s.NextTask()
+	if err != nil {
+		return "", err
+	}
+	if next == nil {
+		return "", nil
+	}
+	// firstLine keeps the notice to a single line even if a title spans several
+	// (titles are stored verbatim); the full title still reaches the model via
+	// WarmContext.
+	return fmt.Sprintf("worklog next task: %s (P%d)", firstLine(next.Title), next.Priority), nil
+}
+
 // blockedTasks returns tasks that are actively blocked (by status or by an
 // unclosed dependency).
 func (s *Store) blockedTasks() ([]TaskView, error) {

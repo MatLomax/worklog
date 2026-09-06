@@ -241,6 +241,36 @@ func TestWarmContext(t *testing.T) {
 	}
 }
 
+func TestNextLine(t *testing.T) {
+	s := newStore(t)
+	// No tasks: no line.
+	if line, err := s.NextLine(); err != nil || line != "" {
+		t.Fatalf("empty store: got %q, err %v; want empty", line, err)
+	}
+	// A dependent blocked by open groundwork is not actionable; the groundwork is,
+	// so the line names the groundwork, not the blocked dependent.
+	a := mustCreate(t, s, CreateTaskInput{Title: "Groundwork"})
+	mustCreate(t, s, CreateTaskInput{Title: "Depends on groundwork", BlockedBy: []string{a.Slug}})
+	line, err := s.NextLine()
+	if err != nil {
+		t.Fatalf("next line: %v", err)
+	}
+	if !strings.HasPrefix(line, "worklog next task: ") || !strings.Contains(line, "Groundwork") {
+		t.Fatalf("next line = %q, want the actionable groundwork task", line)
+	}
+	// Closing the groundwork unblocks the dependent, which then becomes next.
+	if _, err := s.UpdateTask(UpdateTaskInput{Slug: a.Slug, Status: ptr("done")}); err != nil {
+		t.Fatalf("close groundwork: %v", err)
+	}
+	line, err = s.NextLine()
+	if err != nil {
+		t.Fatalf("next line after unblock: %v", err)
+	}
+	if !strings.Contains(line, "Depends on groundwork") {
+		t.Fatalf("next line = %q, want the now-unblocked dependent", line)
+	}
+}
+
 func TestResolveWalksUp(t *testing.T) {
 	dir := t.TempDir()
 	// No .worklog anywhere: resolves to dir/.worklog/tasks.db.

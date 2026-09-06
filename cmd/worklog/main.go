@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -32,6 +33,8 @@ func main() {
 		err = cmdInit(args)
 	case "context":
 		err = cmdContext(args)
+	case "session-start":
+		err = cmdSessionStart(args)
 	case "session-end":
 		err = cmdSessionEnd(args)
 	case "version", "--version", "-v":
@@ -55,7 +58,8 @@ func usage() {
 usage:
   worklog serve   [--db PATH]        run the MCP server over stdio
   worklog init    [--dir DIR]        create .worklog/tasks.db for a project
-  worklog context [--db PATH] [-n N] print the "where was I" briefing (for a SessionStart hook)
+  worklog context [--db PATH] [-n N] print the "where was I" briefing (plain text; for Codex / debugging)
+  worklog session-start [--db PATH] [-n N] SessionStart hook output: warm-load the model + show the next task to the user
   worklog session-end [--summary S]  close the current session (for a Stop hook)
   worklog version
 
@@ -175,5 +179,56 @@ func cmdContext(args []string) error {
 		return err
 	}
 	fmt.Print(out)
+	return nil
+}
+
+// cmdSessionStart emits the Claude Code SessionStart hook payload in one JSON
+// object over its two independent channels: `hookSpecificOutput.additionalContext`
+// warm-loads the "where was I" briefing into the model's context (invisible to
+// the user), and `systemMessage` shows the next task as a line the user sees
+// (plain stdout would reach only the model). It prints nothing when there is no
+// database yet, so it is safe to wire globally; `systemMessage` is omitted when
+// nothing is actionable.
+func cmdSessionStart(args []string) error {
+	fs := flag.NewFlagSet("session-start", flag.ContinueOnError)
+	db := fs.String("db", "", "database path")
+	n := fs.Int("n", 15, "number of recent journal entries")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	path, err := dbPath(*db)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil // no database here yet; nothing to emit
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ctx, err := st.WarmContext(*n)
+	if err != nil {
+		return err
+	}
+	line, err := st.NextLine()
+	if err != nil {
+		return err
+	}
+	payload := struct {
+		SystemMessage      string `json:"systemMessage,omitempty"`
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext,omitempty"`
+		} `json:"hookSpecificOutput"`
+	}{SystemMessage: line}
+	payload.HookSpecificOutput.HookEventName = "SessionStart"
+	payload.HookSpecificOutput.AdditionalContext = ctx
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(out))
 	return nil
 }
