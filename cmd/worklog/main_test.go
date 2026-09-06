@@ -59,7 +59,7 @@ func TestSessionStartCommand(t *testing.T) {
 	// A task whose title needs JSON escaping and spans two lines. The output must
 	// be one valid JSON object; systemMessage a single escaped line ending in the
 	// priority tag with no slug; additionalContext the model briefing naming it.
-	title := "Fix \"parser\" & <tag>\nsecond line"
+	title := "Fix \"parser\" & <tag>\r\nsecond line"
 	st, err := store.Open(dbFile)
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -87,6 +87,9 @@ func TestSessionStartCommand(t *testing.T) {
 	}
 	if strings.Contains(p.SystemMessage, "second line") {
 		t.Fatalf("systemMessage %q leaked the title's second line; want one line only", p.SystemMessage)
+	}
+	if strings.ContainsAny(p.SystemMessage, "\r\n") {
+		t.Fatalf("systemMessage %q contains a CR/LF; the notice must be one line", p.SystemMessage)
 	}
 	if !strings.HasSuffix(p.SystemMessage, " (P3)") {
 		t.Fatalf("systemMessage %q should end with the (P3) priority tag", p.SystemMessage)
