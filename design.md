@@ -91,10 +91,19 @@ markdown rendering is derived from them, never the source of truth.
 
 ## Cross-session flow
 
-1. **SessionStart** (Claude Code hook) runs `worklog context`, injecting open +
-   in-progress tasks, their blockers, and the recent journal tail — the session
-   opens warm. (Codex: call `task-next`/`task-list`, or point `AGENTS.md` at
-   `worklog context`.)
+1. **SessionStart** (Claude Code hook) runs one command, `worklog session-start`,
+   which emits a single JSON payload over the hook's two independent channels.
+   `hookSpecificOutput.additionalContext` injects open + in-progress tasks, their
+   blockers, and the recent journal tail into the model's context — the session
+   opens warm, but this channel is invisible to the user. `systemMessage` — the
+   one SessionStart channel shown to the *user* — carries the next task as a
+   visible line. Folding both into one command keeps the plugin's hook wiring a
+   stable one-command-per-event contract: what session-start does lives in the
+   binary, so it can change without touching the marketplace repo. It prints
+   nothing until `init` has run, so it is safe to wire globally. (Codex has no
+   SessionStart hook and no `systemMessage`: call `task-next`/`task-list`, or
+   point `AGENTS.md` at `worklog context`, which prints the same briefing as
+   plain text.)
 2. **During the session** the agent reads/writes via the MCP tools; decisions
    and journal entries are attributed to the session automatically.
 3. **On stop** the session closes (on disconnect, and/or via the Stop hook),
@@ -106,8 +115,9 @@ This repo is the **client-agnostic tool** — the Go binary and its tests. The
 Claude Code integration ships separately as a **plugin** in the
 [`MatLomax/claude-plugins`](https://github.com/MatLomax/claude-plugins)
 marketplace (`plugins/worklog/`), bundling the three integration pieces — the
-MCP server (`.mcp.json`), the SessionStart/Stop hooks (`hooks/hooks.json`), and
-a `/worklog:init` command — so one `/plugin install` replaces all the manual
+MCP server (`.mcp.json`), the SessionStart/Stop hooks (`hooks/hooks.json`,
+warm-loading context and showing the next task) and a `/worklog:init` command —
+so one `/plugin install` replaces all the manual
 wiring. The plugin is deliberately **glue only**: it expects the `worklog`
 binary on PATH rather than bundling per-platform binaries, which keeps packaging
 trivial and cross-platform-clean at the cost of one install step (`go install`

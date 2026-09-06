@@ -70,7 +70,8 @@ Then, in each project you want tracked:
 
 Because the server is attach-only, the globally-installed plugin does nothing in
 a project until `/worklog:init` runs there. After it does, the SessionStart hook
-warm-loads open work, the Stop hook closes the session, and the worklog MCP tools
+warm-loads open work (into the model's context) and shows the next task as a
+visible line to you, the Stop hook closes the session, and the worklog MCP tools
 are live.
 
 <details><summary>Manual setup (without the plugin)</summary>
@@ -84,13 +85,18 @@ Hooks in your settings:
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "worklog context" }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "worklog session-start" }] }],
     "Stop":         [{ "hooks": [{ "type": "command", "command": "worklog session-end" }] }]
   }
 }
 ```
 
-Ready-made hook scripts (bash and PowerShell) are in `hooks/`.
+`worklog session-start` emits one SessionStart payload over both of the hook's
+channels: `additionalContext` feeds the full briefing into the model's context
+(invisible to you), and `systemMessage` shows the next task as a visible line to
+you. It is safe to wire globally — it prints nothing until `worklog init` has run
+in a project. Ready-made hook scripts (bash and PowerShell) for both events are
+in `hooks/`.
 </details>
 
 ### Codex CLI
@@ -133,7 +139,8 @@ Codex has no SessionStart-style context hook, so to warm-load either call
 ```
 worklog serve       [--db PATH]        run the MCP server over stdio
 worklog init        [--dir DIR]        create .worklog/tasks.db
-worklog context     [--db PATH] [-n N] print the "where was I" briefing
+worklog context     [--db PATH] [-n N] print the "where was I" briefing (plain text; Codex / debugging)
+worklog session-start [--db PATH] [-n N] SessionStart hook output: warm-load the model + show the next task
 worklog session-end [--summary S]      close the current session
 worklog version
 ```
