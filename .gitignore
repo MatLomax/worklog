@@ -1,6 +1,7 @@
 /worklog
 /worklog.exe
 /dist/
+.tmp/
 *.db
 *.db-wal
 *.db-shm
