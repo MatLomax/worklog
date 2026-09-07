@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -89,8 +90,7 @@ CREATE TABLE IF NOT EXISTS journal (
   task_id    INTEGER REFERENCES task(id) ON DELETE CASCADE,
   session_id INTEGER REFERENCES session(id) ON DELETE SET NULL,
   ts         TEXT NOT NULL,
-  kind       TEXT NOT NULL DEFAULT 'note'
-             CHECK (kind IN ('note','status_change','link_added','decision','created')),
+  kind       TEXT NOT NULL DEFAULT 'note',
   text_md    TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_journal_task ON journal(task_id);
@@ -147,7 +147,78 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// schemaVersion is the migration level recorded in PRAGMA user_version.
+const schemaVersion = 1
+
+// migrate brings an existing database up to schemaVersion; a fresh one already
+// matches the current schema and only has its version stamped. Migration 1 drops
+// a legacy CHECK on journal.kind that rejected newer entry kinds (slug_change,
+// ref_rewrite) — the kind is an internal enum written only by this package, so
+// the constraint added maintenance cost without guarding against user input.
+func migrate(db *sql.DB) error {
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return err
+	}
+	if v >= schemaVersion {
+		return nil
+	}
+	if err := dropJournalKindCheck(db); err != nil {
+		return err
+	}
+	_, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion))
+	return err
+}
+
+// dropJournalKindCheck rebuilds the journal table without the legacy kind CHECK.
+// It is a no-op on a database whose journal table already lacks it (a fresh one).
+func dropJournalKindCheck(db *sql.DB) error {
+	var ddl string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='journal'`).Scan(&ddl); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
+	if !strings.Contains(ddl, "CHECK (kind") {
+		return nil
+	}
+	// journal is a leaf table (nothing references it), so a straight rebuild is
+	// safe with foreign keys enforced.
+	stmts := []string{
+		`CREATE TABLE journal_new (
+  id         INTEGER PRIMARY KEY,
+  task_id    INTEGER REFERENCES task(id) ON DELETE CASCADE,
+  session_id INTEGER REFERENCES session(id) ON DELETE SET NULL,
+  ts         TEXT NOT NULL,
+  kind       TEXT NOT NULL DEFAULT 'note',
+  text_md    TEXT NOT NULL DEFAULT ''
+)`,
+		`INSERT INTO journal_new (id, task_id, session_id, ts, kind, text_md)
+   SELECT id, task_id, session_id, ts, kind, text_md FROM journal`,
+		`DROP TABLE journal`,
+		`ALTER TABLE journal_new RENAME TO journal`,
+		`CREATE INDEX IF NOT EXISTS idx_journal_task ON journal(task_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_journal_ts ON journal(ts)`,
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range stmts {
+		if _, err := tx.Exec(q); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Close closes the underlying database.

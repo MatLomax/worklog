@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -281,6 +282,68 @@ func TestResolveWalksUp(t *testing.T) {
 	want := filepath.Join(dir, DirName, FileName)
 	if got != want {
 		t.Fatalf("resolve = %q, want %q", got, want)
+	}
+}
+
+func TestMigrateDropsLegacyJournalKindCheck(t *testing.T) {
+	dir := t.TempDir()
+	dsn := filepath.Join(dir, "tasks.db") + "?_pragma=foreign_keys(1)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	defer db.Close()
+
+	// Start from the full current schema (so task/session exist for the journal's
+	// foreign keys), then swap journal back to its pre-migration form: the old
+	// kind CHECK, plus a seeded row.
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("base schema: %v", err)
+	}
+	legacy := `DROP TABLE journal;
+CREATE TABLE journal (
+  id         INTEGER PRIMARY KEY,
+  task_id    INTEGER REFERENCES task(id) ON DELETE CASCADE,
+  session_id INTEGER REFERENCES session(id) ON DELETE SET NULL,
+  ts         TEXT NOT NULL,
+  kind       TEXT NOT NULL DEFAULT 'note'
+             CHECK (kind IN ('note','status_change','link_added','decision','created')),
+  text_md    TEXT NOT NULL DEFAULT ''
+);`
+	if _, err := db.Exec(legacy); err != nil {
+		t.Fatalf("legacy schema: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO journal (ts, kind, text_md) VALUES ('t','note','keep me')`); err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+	// The legacy CHECK must actually reject the new kind — otherwise this test
+	// would pass without proving the migration did anything.
+	if _, err := db.Exec(`INSERT INTO journal (ts, kind, text_md) VALUES ('t','slug_change','x')`); err == nil {
+		t.Fatal("legacy CHECK should reject slug_change before migration")
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// Data survived the table rebuild.
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM journal WHERE text_md='keep me'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("seeded row lost: n=%d err=%v", n, err)
+	}
+	// The kinds that the CHECK used to reject now insert.
+	for _, k := range []string{"slug_change", "ref_rewrite"} {
+		if _, err := db.Exec(`INSERT INTO journal (ts, kind, text_md) VALUES ('t', ?, 'x')`, k); err != nil {
+			t.Fatalf("kind %q still rejected after migrate: %v", k, err)
+		}
+	}
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != schemaVersion {
+		t.Fatalf("user_version = %d (err %v), want %d", v, err, schemaVersion)
+	}
+	// Re-running is a no-op.
+	if err := migrate(db); err != nil {
+		t.Fatalf("second migrate: %v", err)
 	}
 }
 

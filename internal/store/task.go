@@ -264,17 +264,84 @@ func (s *Store) UpdateTask(in UpdateTaskInput) (*Task, error) {
 		}
 	}
 
+	// A rename cascades into other bodies, so the row update, the reference
+	// rewrite, and their journal entries commit together or not at all.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
 	args = append(args, t.ID)
-	if _, err := s.db.Exec(`UPDATE task SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...); err != nil {
+	if _, err := tx.Exec(`UPDATE task SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...); err != nil {
 		return nil, err
 	}
 	if slugChange != "" {
-		s.journalKind(t.ID, "slug_change", slugChange)
+		if err := s.journalOn(tx, t.ID, "slug_change", slugChange); err != nil {
+			return nil, err
+		}
+		if err := s.rewriteBodyRefs(tx, t.Slug, lookupSlug); err != nil {
+			return nil, err
+		}
 	}
 	if statusChange != "" {
-		s.journalKind(t.ID, "status_change", statusChange)
+		if err := s.journalOn(tx, t.ID, "status_change", statusChange); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return s.taskBySlug(lookupSlug)
+}
+
+// rewriteBodyRefs rewrites every reference to oldSlug into newSlug across all
+// task bodies, in both delimited forms — the wikilink `[[slug]]` and the code
+// span “ `slug` “. Matching is on the exact delimited token, so a rename of
+// "build-it" never touches `[[build-it-2]]` or the bare word in prose. Each body
+// actually changed is journaled and its updated_at bumped.
+func (s *Store) rewriteBodyRefs(x querier, oldSlug, newSlug string) error {
+	oldWiki, newWiki := "[["+oldSlug+"]]", "[["+newSlug+"]]"
+	oldCode, newCode := "`"+oldSlug+"`", "`"+newSlug+"`"
+
+	rows, err := x.Query(
+		`SELECT id, body_md FROM task WHERE body_md LIKE ? OR body_md LIKE ?`,
+		"%"+oldWiki+"%", "%"+oldCode+"%")
+	if err != nil {
+		return err
+	}
+	type bodyRow struct {
+		id   int64
+		body string
+	}
+	var pending []bodyRow
+	for rows.Next() {
+		var r bodyRow
+		if err := rows.Scan(&r.id, &r.body); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, r := range pending {
+		nb := strings.ReplaceAll(r.body, oldWiki, newWiki)
+		nb = strings.ReplaceAll(nb, oldCode, newCode)
+		if nb == r.body {
+			continue // defensive: nothing actually changed, so skip the write and its journal
+		}
+		if _, err := x.Exec(`UPDATE task SET body_md = ?, updated_at = ? WHERE id = ?`, nb, now(), r.id); err != nil {
+			return err
+		}
+		if err := s.journalOn(x, r.id, "ref_rewrite", oldSlug+" → "+newSlug); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validStatus(s string) bool {

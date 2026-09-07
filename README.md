@@ -135,6 +135,15 @@ Codex has no SessionStart-style context hook, so to warm-load either call
 | `work-find` | search tasks, decisions, and journal — find what was *done* |
 | `session-summary` | close the session with a summary for the next one |
 
+### Referencing tasks in a body
+
+Refer to another task from within a task body by its slug, in either a wikilink
+`[[some-slug]]` or a code span `` `some-slug` ``. Renaming a task with
+`task-update`'s `new_slug` rewrites both forms of the old slug across every task
+body in the same operation, so cross-references never dangle. The exact
+delimited token is matched, so renaming `build-it` never touches `[[build-it-2]]`
+or the bare word `build-it` in prose.
+
 ## CLI
 
 ```

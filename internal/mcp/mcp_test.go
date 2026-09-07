@@ -242,6 +242,74 @@ func TestUpdateRenamesSlug(t *testing.T) {
 	}
 }
 
+func TestRenameRewritesBodyReferences(t *testing.T) {
+	s := newServer(t)
+	if _, isErr := call(t, s, "task-create", map[string]any{"title": "Alpha"}); isErr {
+		t.Fatal("task-create Alpha errored")
+	}
+	if _, isErr := call(t, s, "task-create", map[string]any{"title": "Alpha two"}); isErr {
+		t.Fatal("task-create Alpha two errored")
+	}
+	// Beta references alpha two delimited forms, a near-miss token, and bare prose.
+	betaBody := "Depends on [[alpha]] and the `alpha` module. See also [[alpha-two]]. The alpha release."
+	if _, isErr := call(t, s, "task-create", map[string]any{"title": "Beta", "body": betaBody}); isErr {
+		t.Fatal("task-create Beta errored")
+	}
+
+	if _, isErr := call(t, s, "task-update", map[string]any{"slug": "alpha", "new_slug": "Gamma Ray"}); isErr {
+		t.Fatal("rename errored")
+	}
+
+	body, isErr := call(t, s, "task-get", map[string]any{"slug": "beta"})
+	if isErr {
+		t.Fatalf("task-get beta errored: %s", body)
+	}
+	if !strings.Contains(body, "[[gamma-ray]]") {
+		t.Fatalf("wikilink reference not rewritten: %s", body)
+	}
+	if !strings.Contains(body, "`gamma-ray`") {
+		t.Fatalf("code-span reference not rewritten: %s", body)
+	}
+	if strings.Contains(body, "[[alpha]]") || strings.Contains(body, "`alpha`") {
+		t.Fatalf("an old delimited reference survived: %s", body)
+	}
+	// The near-miss token and the bare word must be untouched.
+	if !strings.Contains(body, "[[alpha-two]]") {
+		t.Fatalf("near-miss token [[alpha-two]] was wrongly rewritten: %s", body)
+	}
+	if !strings.Contains(body, "The alpha release") {
+		t.Fatalf("bare-prose 'alpha' was wrongly rewritten: %s", body)
+	}
+	// The rewrite is journaled on the affected task (a ref_rewrite entry appears
+	// in beta's journal), and the rename itself on the renamed task — the exact
+	// writes that were silently failing before the journal kind CHECK was dropped.
+	if !strings.Contains(body, "ref_rewrite") {
+		t.Fatalf("body rewrite was not journaled on beta: %s", body)
+	}
+	renamed, isErr := call(t, s, "task-get", map[string]any{"slug": "gamma-ray"})
+	if isErr {
+		t.Fatalf("task-get gamma-ray errored: %s", renamed)
+	}
+	if !strings.Contains(renamed, "slug_change") {
+		t.Fatalf("rename was not journaled on the renamed task: %s", renamed)
+	}
+
+	// A self-reference in the renamed task's own body is rewritten too.
+	if _, isErr := call(t, s, "task-create", map[string]any{"title": "Selfie", "body": "Blocks [[selfie]]."}); isErr {
+		t.Fatal("task-create Selfie errored")
+	}
+	if _, isErr := call(t, s, "task-update", map[string]any{"slug": "selfie", "new_slug": "mirror"}); isErr {
+		t.Fatal("self rename errored")
+	}
+	own, isErr := call(t, s, "task-get", map[string]any{"slug": "mirror"})
+	if isErr {
+		t.Fatalf("task-get mirror errored: %s", own)
+	}
+	if !strings.Contains(own, "[[mirror]]") || strings.Contains(own, "[[selfie]]") {
+		t.Fatalf("self-reference not rewritten in own body: %s", own)
+	}
+}
+
 func TestUnknownToolIsError(t *testing.T) {
 	s := newServer(t)
 	out, isErr := call(t, s, "no-such-tool", nil)

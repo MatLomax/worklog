@@ -28,8 +28,29 @@ func (s *Store) AddJournal(slug, text string) (*JournalEntry, error) {
 }
 
 // journal appends an entry with the default "note" kind.
+// querier is the read/write surface shared by *sql.DB and *sql.Tx, so a helper
+// can run either standalone or inside a caller's transaction.
+type querier interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 func (s *Store) journal(taskID int64, kind, text string) (*JournalEntry, error) {
 	return s.journalKind(taskID, kind, text)
+}
+
+// journalOn appends a typed entry on the given executor (DB or Tx), attributed
+// to the current session. Used when the write must join a transaction.
+func (s *Store) journalOn(x querier, taskID int64, kind, text string) error {
+	var tid sql.NullInt64
+	if taskID != 0 {
+		tid = sql.NullInt64{Int64: taskID, Valid: true}
+	}
+	_, err := x.Exec(
+		`INSERT INTO journal (task_id, session_id, ts, kind, text_md) VALUES (?,?,?,?,?)`,
+		tid, s.sessionRef(), now(), kind, text)
+	return err
 }
 
 // journalKind appends a typed entry, attributed to the current session. A
