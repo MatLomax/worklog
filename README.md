@@ -126,7 +126,7 @@ Codex has no SessionStart-style context hook, so to warm-load either call
 | `task-next` | the single highest-priority actionable task |
 | `task-tree` | the task forest / a subtree, nested |
 | `task-create` | create a task, optionally under a parent, with blockers |
-| `task-update` | change status/priority/parent/body; done unblocks dependents |
+| `task-update` | change slug/status/priority/parent/body; done unblocks dependents |
 | `task-add-blocker` / `task-remove-blocker` | add or remove blocking deps on an existing task |
 | `task-toc` / `task-section-get` / `task-section-set` | read/edit one `##` section of a body |
 | `task-link` | attach a GitHub issue/PR (full URL), commit, file, or URL |

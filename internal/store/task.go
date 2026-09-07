@@ -33,16 +33,23 @@ func closed(status string) bool { return status == "done" || status == "dropped"
 
 var slugStrip = regexp.MustCompile(`[^a-z0-9]+`)
 
-func slugify(title string) string {
+// slugBase normalizes text to a slug, returning "" when the input has no
+// slug-able characters. slugify layers the "task" fallback on top; callers that
+// must reject blank input (e.g. an explicit rename) use slugBase directly.
+func slugBase(title string) string {
 	s := slugStrip.ReplaceAllString(strings.ToLower(title), "-")
 	s = strings.Trim(s, "-")
-	if s == "" {
-		s = "task"
-	}
 	if len(s) > 60 {
 		s = strings.Trim(s[:60], "-")
 	}
 	return s
+}
+
+func slugify(title string) string {
+	if s := slugBase(title); s != "" {
+		return s
+	}
+	return "task"
 }
 
 // uniqueSlug returns base, or base-2, base-3, … until one is free.
@@ -166,6 +173,7 @@ func (s *Store) scanTask(row scanner) (*Task, error) {
 // UpdateTaskInput carries an update; nil pointers leave a field unchanged.
 type UpdateTaskInput struct {
 	Slug     string
+	NewSlug  *string // rename the task's slug; normalized like a created slug
 	Title    *string
 	Status   *string
 	Priority *int
@@ -183,6 +191,29 @@ func (s *Store) UpdateTask(in UpdateTaskInput) (*Task, error) {
 	}
 	sets := []string{"updated_at = ?"}
 	args := []any{now()}
+
+	// lookupSlug is how we re-read the task at the end; a rename changes it.
+	lookupSlug := in.Slug
+	var slugChange string
+	if in.NewSlug != nil {
+		ns := slugBase(*in.NewSlug)
+		if ns == "" {
+			return nil, fmt.Errorf("new slug %q has no slug-able characters", *in.NewSlug)
+		}
+		if ns != t.Slug {
+			var n int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM task WHERE slug = ? AND id <> ?`, ns, t.ID).Scan(&n); err != nil {
+				return nil, err
+			}
+			if n > 0 {
+				return nil, fmt.Errorf("slug %q is already taken", ns)
+			}
+			sets = append(sets, "slug = ?")
+			args = append(args, ns)
+			slugChange = fmt.Sprintf("%s → %s", t.Slug, ns)
+			lookupSlug = ns
+		}
+	}
 
 	if in.Title != nil {
 		sets = append(sets, "title = ?")
@@ -237,10 +268,13 @@ func (s *Store) UpdateTask(in UpdateTaskInput) (*Task, error) {
 	if _, err := s.db.Exec(`UPDATE task SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...); err != nil {
 		return nil, err
 	}
+	if slugChange != "" {
+		s.journalKind(t.ID, "slug_change", slugChange)
+	}
 	if statusChange != "" {
 		s.journalKind(t.ID, "status_change", statusChange)
 	}
-	return s.taskBySlug(in.Slug)
+	return s.taskBySlug(lookupSlug)
 }
 
 func validStatus(s string) bool {

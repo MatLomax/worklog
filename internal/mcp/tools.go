@@ -60,6 +60,7 @@ var toolList = []toolDef{
 	{"task-update", "Update a task's fields. Setting status to done/dropped stamps its close time and unblocks dependents.",
 		obj(map[string]any{
 			"slug":     strp("task slug"),
+			"new_slug": strp("rename the task's slug; normalized like a created slug, and must not collide with an existing task"),
 			"title":    strp("new title"),
 			"status":   enumP("new status", statusEnum...),
 			"priority": intP("new priority 1-5"),
@@ -239,6 +240,7 @@ var handlers = map[string]handler{
 	"task-update": func(st *store.Store, a json.RawMessage) ([]string, error) {
 		var in struct {
 			Slug     string  `json:"slug"`
+			NewSlug  *string `json:"new_slug"`
 			Title    *string `json:"title"`
 			Status   *string `json:"status"`
 			Priority *int    `json:"priority"`
@@ -250,7 +252,7 @@ var handlers = map[string]handler{
 			return nil, err
 		}
 		t, err := st.UpdateTask(store.UpdateTaskInput{
-			Slug: in.Slug, Title: in.Title, Status: in.Status, Priority: in.Priority,
+			Slug: in.Slug, NewSlug: in.NewSlug, Title: in.Title, Status: in.Status, Priority: in.Priority,
 			Position: in.Position, Parent: in.Parent, Body: in.Body,
 		})
 		if err != nil {

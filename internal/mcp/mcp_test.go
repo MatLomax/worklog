@@ -195,6 +195,53 @@ func TestBlockerToolsManageDepsOnExistingTasks(t *testing.T) {
 	}
 }
 
+func TestUpdateRenamesSlug(t *testing.T) {
+	s := newServer(t)
+	for _, title := range []string{"Ship it", "Build it"} {
+		if _, isErr := call(t, s, "task-create", map[string]any{"title": title}); isErr {
+			t.Fatalf("task-create %q errored", title)
+		}
+	}
+
+	// A messy new_slug is normalized like a created slug, and the detail reflects it.
+	out, isErr := call(t, s, "task-update", map[string]any{"slug": "ship-it", "new_slug": "Deploy It!"})
+	if isErr {
+		t.Fatalf("rename errored: %s", out)
+	}
+	if !strings.Contains(out, "deploy-it") {
+		t.Fatalf("normalized new slug not echoed: %s", out)
+	}
+	// The old slug no longer resolves; the new one does.
+	if _, isErr := call(t, s, "task-get", map[string]any{"slug": "ship-it"}); !isErr {
+		t.Fatal("old slug still resolves after rename")
+	}
+	if _, isErr := call(t, s, "task-get", map[string]any{"slug": "deploy-it"}); isErr {
+		t.Fatal("new slug does not resolve after rename")
+	}
+
+	// Renaming onto an existing slug is an error, not a silent auto-suffix.
+	if _, isErr := call(t, s, "task-update", map[string]any{"slug": "deploy-it", "new_slug": "build-it"}); !isErr {
+		t.Fatal("renaming onto an existing slug should error")
+	}
+
+	// Renaming a task to its own slug is a no-op, not a collision error.
+	if _, isErr := call(t, s, "task-update", map[string]any{"slug": "deploy-it", "new_slug": "deploy-it"}); isErr {
+		t.Fatal("renaming a task to its own slug should be a no-op")
+	}
+
+	// A new_slug with no slug-able characters is an error, not a silent
+	// rename to the "task" fallback.
+	for _, bad := range []string{"", "  ", "!!!"} {
+		if _, isErr := call(t, s, "task-update", map[string]any{"slug": "deploy-it", "new_slug": bad}); !isErr {
+			t.Fatalf("new_slug %q should error, not silently rename", bad)
+		}
+	}
+	// The failed renames left the slug untouched.
+	if _, isErr := call(t, s, "task-get", map[string]any{"slug": "deploy-it"}); isErr {
+		t.Fatal("slug changed despite a rejected new_slug")
+	}
+}
+
 func TestUnknownToolIsError(t *testing.T) {
 	s := newServer(t)
 	out, isErr := call(t, s, "no-such-tool", nil)
