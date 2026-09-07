@@ -67,6 +67,16 @@ var toolList = []toolDef{
 			"parent":   strp("new parent slug; empty string detaches to top level"),
 			"body":     strp("replace the full markdown body"),
 		}, "slug")},
+	{"task-add-blocker", "Add one or more blocking dependencies to an existing task — it stays blocked until each blocker is done or dropped.",
+		obj(map[string]any{
+			"slug":       strp("task slug"),
+			"blocked_by": arrP("slugs of tasks that block this one"),
+		}, "slug", "blocked_by")},
+	{"task-remove-blocker", "Remove one or more blocking dependencies from a task. Both the task and each named blocker must exist; an edge that isn't set is a no-op.",
+		obj(map[string]any{
+			"slug":       strp("task slug"),
+			"blocked_by": arrP("slugs of blocking tasks to detach"),
+		}, "slug", "blocked_by")},
 	{"task-toc", "List the ## section paths within a task's body.",
 		obj(map[string]any{"slug": strp("task slug")}, "slug")},
 	{"task-section-get", "Read one section of a task body by heading path (e.g. \"Design/Storage\").",
@@ -247,6 +257,44 @@ var handlers = map[string]handler{
 			return nil, err
 		}
 		return js(t), nil
+	},
+	"task-add-blocker": func(st *store.Store, a json.RawMessage) ([]string, error) {
+		var in struct {
+			Slug      string   `json:"slug"`
+			BlockedBy []string `json:"blocked_by"`
+		}
+		if err := parse(a, &in); err != nil {
+			return nil, err
+		}
+		for _, b := range in.BlockedBy {
+			if err := st.AddDep(in.Slug, b); err != nil {
+				return nil, err
+			}
+		}
+		d, err := st.Detail(in.Slug)
+		if err != nil {
+			return nil, err
+		}
+		return js(d), nil
+	},
+	"task-remove-blocker": func(st *store.Store, a json.RawMessage) ([]string, error) {
+		var in struct {
+			Slug      string   `json:"slug"`
+			BlockedBy []string `json:"blocked_by"`
+		}
+		if err := parse(a, &in); err != nil {
+			return nil, err
+		}
+		for _, b := range in.BlockedBy {
+			if err := st.RemoveDep(in.Slug, b); err != nil {
+				return nil, err
+			}
+		}
+		d, err := st.Detail(in.Slug)
+		if err != nil {
+			return nil, err
+		}
+		return js(d), nil
 	},
 	"task-toc": func(st *store.Store, a json.RawMessage) ([]string, error) {
 		var in struct {

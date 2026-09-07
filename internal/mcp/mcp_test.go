@@ -69,6 +69,17 @@ func TestToolsListAdvertisesAll(t *testing.T) {
 	}
 }
 
+func TestEveryAdvertisedToolHasAHandler(t *testing.T) {
+	if len(handlers) != len(toolList) {
+		t.Fatalf("handlers=%d toolList=%d — every advertised tool must map 1:1 to a handler", len(handlers), len(toolList))
+	}
+	for _, td := range toolList {
+		if handlers[td.Name] == nil {
+			t.Errorf("tool %q is advertised but has no handler", td.Name)
+		}
+	}
+}
+
 func TestToolCallRoundTrip(t *testing.T) {
 	s := newServer(t)
 
@@ -139,6 +150,49 @@ func TestAttachOnlyUntilInit(t *testing.T) {
 		t.Fatalf("expected created task, got %q", out)
 	}
 	s.shutdown()
+}
+
+func TestBlockerToolsManageDepsOnExistingTasks(t *testing.T) {
+	s := newServer(t)
+	for _, title := range []string{"Ship it", "Build it", "Design it"} {
+		if _, isErr := call(t, s, "task-create", map[string]any{"title": title}); isErr {
+			t.Fatalf("task-create %q errored", title)
+		}
+	}
+
+	// Add two blockers to a task that was created without any.
+	out, isErr := call(t, s, "task-add-blocker", map[string]any{
+		"slug": "ship-it", "blocked_by": []string{"build-it", "design-it"},
+	})
+	if isErr {
+		t.Fatalf("task-add-blocker errored: %s", out)
+	}
+	if !strings.Contains(out, "build-it") || !strings.Contains(out, "design-it") {
+		t.Fatalf("added blockers not echoed: %s", out)
+	}
+
+	// A blocked task is not offered as the next actionable one.
+	if next, _ := call(t, s, "task-next", nil); strings.Contains(next, "ship-it") {
+		t.Fatalf("blocked task returned as next: %s", next)
+	}
+
+	// Removing one leaves the other in place (incremental, not a full replace).
+	out, isErr = call(t, s, "task-remove-blocker", map[string]any{
+		"slug": "ship-it", "blocked_by": []string{"build-it"},
+	})
+	if isErr {
+		t.Fatalf("task-remove-blocker errored: %s", out)
+	}
+	if strings.Contains(out, "build-it") || !strings.Contains(out, "design-it") {
+		t.Fatalf("remove left the wrong blocker set: %s", out)
+	}
+
+	// A nonexistent blocker slug is an error, not a silent no-op.
+	if _, isErr := call(t, s, "task-add-blocker", map[string]any{
+		"slug": "ship-it", "blocked_by": []string{"does-not-exist"},
+	}); !isErr {
+		t.Fatal("adding a nonexistent blocker should error")
+	}
 }
 
 func TestUnknownToolIsError(t *testing.T) {
