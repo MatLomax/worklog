@@ -152,8 +152,16 @@ worklog init        [--dir DIR]        create .worklog/tasks.db
 worklog context     [--db PATH] [-n N] print the "where was I" briefing (plain text; Codex / debugging)
 worklog session-start [--db PATH] [-n N] SessionStart hook output: warm-load the model + show the next task
 worklog session-end [--summary S]      close the current session
+worklog update      [--check|--auto|--force] update the binary in place from the latest release
 worklog version
 ```
+
+`worklog update` self-updates the on-PATH binary from the latest GitHub release
+(SHA-256 verified, atomic in-place swap). It follows the shared self-update
+contract in [`MatLomax/claude-plugins` `CONVENTIONS.md`](https://github.com/MatLomax/claude-plugins/blob/main/CONVENTIONS.md);
+the worklog specifics are the `worklog-<goos>-<goarch>[.exe]` release asset and a
+version taken from the build stamp, falling back to the Go build-info module
+version.
 
 See [design.md](design.md) for the data model and the reasoning behind it.
 
