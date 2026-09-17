@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 
 	"github.com/MatLomax/worklog/internal/mcp"
 	"github.com/MatLomax/worklog/internal/store"
@@ -17,8 +18,40 @@ import (
 // version is set at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
+// resolvedVersion reports the running binary's version. A release binary carries
+// it via -ldflags; a `go install ...@latest` build leaves version as "dev" (or a
+// CI slip could leave it empty), so we fall back to the module version the Go
+// toolchain records in the build info. An empty or "(devel)" build version means
+// a local/dev build with no real version, which stays "dev" and so is never
+// auto-updated.
+func resolvedVersion() string {
+	return resolveVersion(version, buildModuleVersion())
+}
+
+// buildModuleVersion is the module version the Go toolchain embeds (e.g. from
+// `go install …@v1.2.3`), or "" / "(devel)" for a local build.
+func buildModuleVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		return bi.Main.Version
+	}
+	return ""
+}
+
+// resolveVersion picks the stamped version when it is a real value, else the
+// build-info module version, else "dev". Split out (pure) so it is testable
+// without a stamped binary.
+func resolveVersion(stamped, build string) string {
+	if stamped != "dev" && stamped != "" {
+		return stamped
+	}
+	if build != "" && build != "(devel)" {
+		return build
+	}
+	return "dev"
+}
+
 func main() {
-	mcp.Version = version
+	mcp.Version = resolvedVersion()
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -37,8 +70,10 @@ func main() {
 		err = cmdSessionStart(args)
 	case "session-end":
 		err = cmdSessionEnd(args)
+	case "update":
+		err = cmdUpdate(args)
 	case "version", "--version", "-v":
-		fmt.Println("worklog", version)
+		fmt.Println("worklog", resolvedVersion())
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -61,6 +96,7 @@ usage:
   worklog context [--db PATH] [-n N] print the "where was I" briefing (plain text; for Codex / debugging)
   worklog session-start [--db PATH] [-n N] SessionStart hook output: warm-load the model + show the next task to the user
   worklog session-end [--summary S]  close the current session (for a Stop hook)
+  worklog update [--check|--auto|--force]  update the binary in place from the latest GitHub release
   worklog version
 
 The database is resolved from the current directory: the nearest ancestor
