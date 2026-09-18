@@ -5,3 +5,6 @@
 *.db
 *.db-wal
 *.db-shm
+
+# Local design scratch, not part of the shipped project
+design-aspects.md
