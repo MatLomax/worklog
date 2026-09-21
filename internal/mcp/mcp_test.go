@@ -310,6 +310,98 @@ func TestRenameRewritesBodyReferences(t *testing.T) {
 	}
 }
 
+func TestRecordEditAndDeleteThroughMCP(t *testing.T) {
+	s := newServer(t)
+	if _, isErr := call(t, s, "task-create", map[string]any{"title": "Choose storage"}); isErr {
+		t.Fatal("task-create errored")
+	}
+	if _, isErr := call(t, s, "task-decide", map[string]any{
+		"slug": "choose-storage", "decision": "Use SQLite", "rationale": "local",
+	}); isErr {
+		t.Fatal("task-decide errored")
+	}
+	get, isErr := call(t, s, "task-get", map[string]any{"slug": "choose-storage"})
+	if isErr {
+		t.Fatalf("task-get errored: %s", get)
+	}
+	if !strings.Contains(get, "Use SQLite") {
+		t.Fatalf("decision not present before edit: %s", get)
+	}
+
+	// Pull the decision id out of the JSON block task-get returns.
+	var detail struct {
+		Decisions []struct {
+			ID int64 `json:"id"`
+		} `json:"decisions"`
+	}
+	if err := json.Unmarshal([]byte(lastJSONBlock(get)), &detail); err != nil {
+		t.Fatalf("unmarshal task-get: %v", err)
+	}
+	if len(detail.Decisions) != 1 {
+		t.Fatalf("expected 1 decision, got %d", len(detail.Decisions))
+	}
+	id := detail.Decisions[0].ID
+
+	out, isErr := call(t, s, "record-edit", map[string]any{
+		"kind": "decision", "id": id, "field": "decision", "content": "Use SQLite, not Postgres",
+	})
+	if isErr {
+		t.Fatalf("record-edit errored: %s", out)
+	}
+	if !strings.Contains(out, "edited decision") {
+		t.Fatalf("record-edit confirmation missing: %s", out)
+	}
+
+	get, isErr = call(t, s, "task-get", map[string]any{"slug": "choose-storage"})
+	if isErr {
+		t.Fatalf("task-get after edit errored: %s", get)
+	}
+	if !strings.Contains(get, "Use SQLite, not Postgres") {
+		t.Fatalf("edit not reflected in task-get: %s", get)
+	}
+	// The Decisions section itself no longer carries the old wording (the
+	// original journal entry from task-decide's own log line is untouched —
+	// editing a record is silent, it does not retroactively rewrite the log).
+	if !strings.Contains(get, "\"decision_md\": \"Use SQLite, not Postgres\"") {
+		t.Fatalf("decision_md field not updated: %s", get)
+	}
+
+	out, isErr = call(t, s, "record-delete", map[string]any{"kind": "decision", "id": id})
+	if isErr {
+		t.Fatalf("record-delete errored: %s", out)
+	}
+	if !strings.Contains(out, "deleted decision") {
+		t.Fatalf("record-delete confirmation missing: %s", out)
+	}
+	get, isErr = call(t, s, "task-get", map[string]any{"slug": "choose-storage"})
+	if isErr {
+		t.Fatalf("task-get after delete errored: %s", get)
+	}
+	if strings.Contains(get, "Use SQLite, not Postgres") {
+		t.Fatalf("decision still present after delete: %s", get)
+	}
+
+	// Error cases surface through the tool as an error result, not a panic.
+	if _, isErr := call(t, s, "record-edit", map[string]any{
+		"kind": "widget", "id": id, "field": "decision", "content": "x",
+	}); !isErr {
+		t.Fatal("record-edit with unknown kind should error")
+	}
+	if _, isErr := call(t, s, "record-delete", map[string]any{"kind": "decision", "id": 999999}); !isErr {
+		t.Fatal("record-delete of a nonexistent id should error")
+	}
+}
+
+// lastJSONBlock extracts the JSON detail block task-get appends after its
+// markdown text block, by finding where an unindented "{" starts a line.
+func lastJSONBlock(out string) string {
+	idx := strings.LastIndex(out, "\n{")
+	if idx == -1 {
+		return out
+	}
+	return strings.TrimRight(out[idx+1:], "\n")
+}
+
 func TestUnknownToolIsError(t *testing.T) {
 	s := newServer(t)
 	out, isErr := call(t, s, "no-such-tool", nil)

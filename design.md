@@ -55,14 +55,25 @@ clobber each other. Six tables:
   `## Decisions` section when a task is shown.
 - **session** — one agent working session; the unit decisions and journal
   entries are attributed to.
-- **journal** — `task_id?, session_id?, ts, kind, text_md`. The running log
-  (`note, status_change, link_added, decision, created`) a fresh session reads
-  to reconstruct where the last one stopped.
+- **journal** — `task_id?, session_id?, ts, kind, text_md, decision_id?`. The
+  running log (`note, status_change, link_added, decision, created`) a fresh
+  session reads to reconstruct where the last one stopped. `decision_id` links
+  a `kind='decision'` row back to the decision it mirrors, so editing or
+  deleting that decision keeps the mirror in sync instead of leaving it stale
+  or orphaned. The link is populated for decisions recorded from this schema
+  version on; mirrors written before it keep `decision_id` NULL, so editing an
+  older decision does not cascade to its (unlinked) mirror.
 
 Links and decisions are **rows, not text buried in the body** — the same mistake
 the old migration spreadsheet made, where branch names and URLs lived in a Notes
 blob and had to be regex'd back out. Rows are queryable and timestamped; the
 markdown rendering is derived from them, never the source of truth.
+
+Decision and journal rows can be corrected or removed in place (`record-edit`,
+`record-delete`) — for fixing a formatting slip, not for narrating "was X, now
+Y". An edit is silent: it does not append a journal entry and does not touch
+the row's `ts`, since the row itself remains the source of truth and a
+correction is not a new event worth logging.
 
 ## Semantics worth stating
 

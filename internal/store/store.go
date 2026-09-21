@@ -86,15 +86,17 @@ CREATE TABLE IF NOT EXISTS decision (
 CREATE INDEX IF NOT EXISTS idx_decision_task ON decision(task_id);
 
 CREATE TABLE IF NOT EXISTS journal (
-  id         INTEGER PRIMARY KEY,
-  task_id    INTEGER REFERENCES task(id) ON DELETE CASCADE,
-  session_id INTEGER REFERENCES session(id) ON DELETE SET NULL,
-  ts         TEXT NOT NULL,
-  kind       TEXT NOT NULL DEFAULT 'note',
-  text_md    TEXT NOT NULL DEFAULT ''
+  id          INTEGER PRIMARY KEY,
+  task_id     INTEGER REFERENCES task(id) ON DELETE CASCADE,
+  session_id  INTEGER REFERENCES session(id) ON DELETE SET NULL,
+  ts          TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'note',
+  text_md     TEXT NOT NULL DEFAULT '',
+  decision_id INTEGER REFERENCES decision(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_journal_task ON journal(task_id);
-CREATE INDEX IF NOT EXISTS idx_journal_ts   ON journal(ts);
+CREATE INDEX IF NOT EXISTS idx_journal_task     ON journal(task_id);
+CREATE INDEX IF NOT EXISTS idx_journal_ts       ON journal(ts);
+CREATE INDEX IF NOT EXISTS idx_journal_decision ON journal(decision_id);
 `
 
 // Resolve returns the database path for the project containing dir, walking up
@@ -155,13 +157,16 @@ func Open(path string) (*Store, error) {
 }
 
 // schemaVersion is the migration level recorded in PRAGMA user_version.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // migrate brings an existing database up to schemaVersion; a fresh one already
 // matches the current schema and only has its version stamped. Migration 1 drops
 // a legacy CHECK on journal.kind that rejected newer entry kinds (slug_change,
 // ref_rewrite) — the kind is an internal enum written only by this package, so
 // the constraint added maintenance cost without guarding against user input.
+// Migration 2 adds journal.decision_id, linking a decision's mirror journal row
+// back to the decision so an edit or delete of the decision can keep the mirror
+// in sync instead of leaving it stale or orphaned.
 func migrate(db *sql.DB) error {
 	var v int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
@@ -171,6 +176,9 @@ func migrate(db *sql.DB) error {
 		return nil
 	}
 	if err := dropJournalKindCheck(db); err != nil {
+		return err
+	}
+	if err := addJournalDecisionID(db); err != nil {
 		return err
 	}
 	_, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion))
@@ -219,6 +227,27 @@ func dropJournalKindCheck(db *sql.DB) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// addJournalDecisionID adds journal.decision_id to a database whose journal
+// table predates it. It is a no-op on a database whose journal table already
+// has the column (a fresh one, built from schema).
+func addJournalDecisionID(db *sql.DB) error {
+	var ddl string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='journal'`).Scan(&ddl); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
+	if strings.Contains(ddl, "decision_id") {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE journal ADD COLUMN decision_id INTEGER REFERENCES decision(id) ON DELETE CASCADE`); err != nil {
+		return err
+	}
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_journal_decision ON journal(decision_id)`)
+	return err
 }
 
 // Close closes the underlying database.

@@ -132,6 +132,8 @@ Codex has no SessionStart-style context hook, so to warm-load either call
 | `task-link` | attach a GitHub issue/PR (full URL), commit, file, or URL |
 | `task-decide` | record a decision + rationale made during execution |
 | `task-journal` | append a freeform note to the running log |
+| `record-edit` | correct a decision/journal field in place, silently |
+| `record-delete` | delete a decision or journal entry by id |
 | `work-find` | search tasks, decisions, and journal — find what was *done* |
 | `session-summary` | close the session with a summary for the next one |
 

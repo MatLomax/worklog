@@ -99,6 +99,18 @@ var toolList = []toolDef{
 		}, "slug", "decision")},
 	{"task-journal", "Append a freeform note to the running log, optionally against a task.",
 		obj(map[string]any{"slug": strp("task slug; omit for a project-level note"), "note": strp("the note")}, "note")},
+	{"record-edit", "Correct a decision or journal entry in place: replace one markdown field of an existing record by id. Does not append a journal correction.",
+		obj(map[string]any{
+			"kind":    enumP("record kind", "decision", "journal"),
+			"id":      intP("record id"),
+			"field":   strp("field to replace: \"decision\" or \"rationale\" for a decision, \"text\" for a journal entry"),
+			"content": strp("new markdown content"),
+		}, "kind", "id", "field", "content")},
+	{"record-delete", "Delete a decision or journal entry by id.",
+		obj(map[string]any{
+			"kind": enumP("record kind", "decision", "journal"),
+			"id":   intP("record id"),
+		}, "kind", "id")},
 	{"work-find", "Search tasks, decisions, and the journal — for finding what was done and decided, not just what's open.",
 		obj(map[string]any{
 			"query":         strp("free text matched against titles, bodies, decisions, journal, and link URLs"),
@@ -384,6 +396,34 @@ var handlers = map[string]handler{
 			return nil, err
 		}
 		return js(e), nil
+	},
+	"record-edit": func(st *store.Store, a json.RawMessage) ([]string, error) {
+		var in struct {
+			Kind    string `json:"kind"`
+			ID      int64  `json:"id"`
+			Field   string `json:"field"`
+			Content string `json:"content"`
+		}
+		if err := parse(a, &in); err != nil {
+			return nil, err
+		}
+		if err := st.EditRecord(in.Kind, in.ID, in.Field, in.Content); err != nil {
+			return nil, err
+		}
+		return []string{fmt.Sprintf("edited %s #%d %s", in.Kind, in.ID, in.Field)}, nil
+	},
+	"record-delete": func(st *store.Store, a json.RawMessage) ([]string, error) {
+		var in struct {
+			Kind string `json:"kind"`
+			ID   int64  `json:"id"`
+		}
+		if err := parse(a, &in); err != nil {
+			return nil, err
+		}
+		if err := st.DeleteRecord(in.Kind, in.ID); err != nil {
+			return nil, err
+		}
+		return []string{fmt.Sprintf("deleted %s #%d", in.Kind, in.ID)}, nil
 	},
 	"work-find": func(st *store.Store, a json.RawMessage) ([]string, error) {
 		var in struct {

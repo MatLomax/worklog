@@ -29,7 +29,7 @@ func (s *Store) AddDecision(slug, decision, rationale string) (*Decision, error)
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
-	s.journalKind(t.ID, "decision", decision)
+	s.journalDecisionMirror(t.ID, id, decision)
 	return &Decision{ID: id, TaskSlug: slug, SessionID: s.sessionID, Ts: ts, Decision: decision, Rationale: rationale}, nil
 }
 

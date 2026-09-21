@@ -71,6 +71,25 @@ func (s *Store) journalKind(taskID int64, kind, text string) (*JournalEntry, err
 	return &JournalEntry{ID: id, SessionID: s.sessionID, Ts: ts, Kind: kind, Text: text}, nil
 }
 
+// journalDecisionMirror appends the journal mirror of a decision, tagged with
+// decision_id so an edit or delete of the decision can find and update the
+// mirror instead of leaving it stale or orphaned.
+func (s *Store) journalDecisionMirror(taskID, decisionID int64, text string) (*JournalEntry, error) {
+	var tid sql.NullInt64
+	if taskID != 0 {
+		tid = sql.NullInt64{Int64: taskID, Valid: true}
+	}
+	ts := now()
+	res, err := s.db.Exec(
+		`INSERT INTO journal (task_id, session_id, ts, kind, text_md, decision_id) VALUES (?,?,?,?,?,?)`,
+		tid, s.sessionRef(), ts, "decision", text, decisionID)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	return &JournalEntry{ID: id, SessionID: s.sessionID, Ts: ts, Kind: "decision", Text: text}, nil
+}
+
 // RecentJournal returns the most recent entries across the whole project,
 // newest first, joined to their task slug when they have one.
 func (s *Store) RecentJournal(limit int) ([]JournalEntry, error) {
