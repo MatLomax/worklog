@@ -80,7 +80,13 @@ correction is not a new event worth logging.
 - **Blocking:** a task is actively blocked if it has a
   dependency that is not yet closed, or an explicit `blocked` status. Closing a
   dependency (`done`/`dropped`) automatically unblocks its dependents — a closed
-  blocker is omitted from the dependent's blocker list.
+  blocker is omitted from the dependent's blocker list. A blocking edge may
+  never form a cycle: an edge whose blocker is already blocked (directly or
+  transitively) by the task is rejected, so the dependency graph stays a DAG and
+  no pair of tasks can deadlock each other out of the actionable order. A
+  multi-blocker add or remove — and a task created with blockers — applies as
+  one transaction: a single unresolvable, self-blocking, or cycle-forming slug
+  rolls back the whole batch, so the edge set never lands half-applied.
 - **Actionable order:** unblocked before blocked, then priority (1 highest),
   then sibling position, then id. `task-next` returns the first actionable
   (`pending`/`in_progress`, no active blockers) task.

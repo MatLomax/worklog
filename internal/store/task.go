@@ -120,8 +120,16 @@ func (s *Store) CreateTask(in CreateTaskInput) (*Task, error) {
 		s.db.QueryRow(`SELECT COALESCE(MAX(position)+1,0) FROM task WHERE parent_id IS NULL`).Scan(&pos)
 	}
 
+	// The row, its blocking edges, and the "created" journal entry commit
+	// together or not at all: a bad or cycle-forming blocker slug must not leave
+	// an orphan task behind.
 	ts := now()
-	res, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(
 		`INSERT INTO task (slug, parent_id, title, body_md, status, priority, position, created_at, updated_at)
 		 VALUES (?,?,?,?,?,?,?,?,?)`,
 		slug, parentID, in.Title, in.Body, status, priority, pos, ts, ts)
@@ -131,11 +139,16 @@ func (s *Store) CreateTask(in CreateTaskInput) (*Task, error) {
 	id, _ := res.LastInsertId()
 
 	for _, b := range in.BlockedBy {
-		if err := s.AddDep(slug, b); err != nil {
+		if err := s.addDep(tx, slug, b); err != nil {
 			return nil, err
 		}
 	}
-	s.journal(id, "created", "created task: "+in.Title)
+	if err := s.journalOn(tx, id, "created", "created task: "+in.Title); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return s.GetTask(slug)
 }
 

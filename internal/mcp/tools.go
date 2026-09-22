@@ -301,10 +301,8 @@ var handlers = map[string]handler{
 		if err := parse(a, &in); err != nil {
 			return nil, err
 		}
-		for _, b := range in.BlockedBy {
-			if err := st.AddDep(in.Slug, b); err != nil {
-				return nil, err
-			}
+		if err := st.AddDeps(in.Slug, in.BlockedBy); err != nil {
+			return nil, err
 		}
 		d, err := st.Detail(in.Slug)
 		if err != nil {
@@ -320,10 +318,8 @@ var handlers = map[string]handler{
 		if err := parse(a, &in); err != nil {
 			return nil, err
 		}
-		for _, b := range in.BlockedBy {
-			if err := st.RemoveDep(in.Slug, b); err != nil {
-				return nil, err
-			}
+		if err := st.RemoveDeps(in.Slug, in.BlockedBy); err != nil {
+			return nil, err
 		}
 		d, err := st.Detail(in.Slug)
 		if err != nil {

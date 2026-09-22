@@ -193,6 +193,46 @@ func TestBlockerToolsManageDepsOnExistingTasks(t *testing.T) {
 	}); !isErr {
 		t.Fatal("adding a nonexistent blocker should error")
 	}
+
+	// A batch that mixes a good and a bad slug is atomic: the good edge must not
+	// survive the failed call. ship-it currently has only design-it as a blocker.
+	if _, isErr := call(t, s, "task-add-blocker", map[string]any{
+		"slug": "ship-it", "blocked_by": []string{"build-it", "does-not-exist"},
+	}); !isErr {
+		t.Fatal("a batch with a nonexistent blocker should error")
+	}
+	out, _ = call(t, s, "task-get", map[string]any{"slug": "ship-it"})
+	if strings.Contains(out, "build-it") {
+		t.Fatalf("failed add-blocker batch left the good edge behind: %s", out)
+	}
+}
+
+func TestAddBlockerRejectsCycleThroughTool(t *testing.T) {
+	s := newServer(t)
+	// build-it is blocked by design-it (design-it must finish first).
+	if _, isErr := call(t, s, "task-create", map[string]any{"title": "Design it"}); isErr {
+		t.Fatal("create design-it errored")
+	}
+	if _, isErr := call(t, s, "task-create", map[string]any{
+		"title": "Build it", "blocked_by": []string{"design-it"},
+	}); isErr {
+		t.Fatal("create build-it errored")
+	}
+	// Making design-it blocked by build-it would close the cycle.
+	out, isErr := call(t, s, "task-add-blocker", map[string]any{
+		"slug": "design-it", "blocked_by": []string{"build-it"},
+	})
+	if !isErr {
+		t.Fatalf("closing a cycle should error, got: %s", out)
+	}
+	if !strings.Contains(out, "cycle") {
+		t.Fatalf("error should name the cycle: %s", out)
+	}
+	// The rejected edge must not have landed.
+	out, _ = call(t, s, "task-get", map[string]any{"slug": "design-it"})
+	if strings.Contains(out, "build-it") {
+		t.Fatalf("rejected cyclic edge was persisted: %s", out)
+	}
 }
 
 func TestUpdateRenamesSlug(t *testing.T) {
