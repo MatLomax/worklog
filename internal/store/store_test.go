@@ -437,6 +437,62 @@ func TestFreshSchemaAlreadyHasJournalDecisionID(t *testing.T) {
 	}
 }
 
+// TestOpenMigratesLegacyOnDiskDB exercises the real Open() path against a
+// pre-migration-2 database on disk: a journal without decision_id, stamped at
+// user_version 1. This is the path every existing install hits on upgrade, and
+// it must succeed — a regression guard for the schema-before-migrate ordering
+// bug where Open failed with "no such column: decision_id".
+func TestOpenMigratesLegacyOnDiskDB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tasks.db")
+	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	// A faithful pre-migration-2 shape: task/session/decision as they were, plus
+	// a journal WITHOUT decision_id and WITHOUT idx_journal_decision.
+	legacy := `
+CREATE TABLE task (
+  id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE, parent_id INTEGER REFERENCES task(id) ON DELETE CASCADE,
+  title TEXT NOT NULL, body_md TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending',
+  priority INTEGER NOT NULL DEFAULT 3, position INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, closed_at TEXT
+);
+CREATE TABLE session (id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT, agent TEXT NOT NULL DEFAULT '', summary_md TEXT NOT NULL DEFAULT '');
+CREATE TABLE decision (
+  id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+  session_id INTEGER REFERENCES session(id) ON DELETE SET NULL, ts TEXT NOT NULL,
+  decision_md TEXT NOT NULL, rationale_md TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE journal (
+  id INTEGER PRIMARY KEY, task_id INTEGER REFERENCES task(id) ON DELETE CASCADE,
+  session_id INTEGER REFERENCES session(id) ON DELETE SET NULL, ts TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'note', text_md TEXT NOT NULL DEFAULT ''
+);
+PRAGMA user_version = 1;`
+	if _, err := db.Exec(legacy); err != nil {
+		t.Fatalf("build legacy db: %v", err)
+	}
+	db.Close()
+
+	// The real path a user hits on upgrade: it must not error.
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on legacy on-disk db: %v", err)
+	}
+	defer s.Close()
+
+	var v int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != schemaVersion {
+		t.Fatalf("user_version = %d (err %v), want %d", v, err, schemaVersion)
+	}
+	// And the migrated database is fully usable end to end.
+	mustCreate(t, s, CreateTaskInput{Title: "Post-upgrade task"})
+	if _, err := s.AddDecision("post-upgrade-task", "It works", ""); err != nil {
+		t.Fatalf("decide on upgraded db: %v", err)
+	}
+}
+
 func TestMigrateAddsJournalDecisionID(t *testing.T) {
 	dir := t.TempDir()
 	dsn := filepath.Join(dir, "tasks.db") + "?_pragma=foreign_keys(1)"

@@ -145,13 +145,17 @@ func Open(path string) (*Store, error) {
 	if path == ":memory:" {
 		db.SetMaxOpenConns(1)
 	}
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
-	}
+	// Migrate before applying the schema: a database predating a column brings
+	// itself up to the current shape first, so the idempotent schema re-apply
+	// (whose CREATE INDEX statements reference migration-added columns) never
+	// runs against a table that still lacks them.
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -159,8 +163,10 @@ func Open(path string) (*Store, error) {
 // schemaVersion is the migration level recorded in PRAGMA user_version.
 const schemaVersion = 2
 
-// migrate brings an existing database up to schemaVersion; a fresh one already
-// matches the current schema and only has its version stamped. Migration 1 drops
+// migrate brings an existing database up to schemaVersion before the schema is
+// applied; on a fresh (empty) database every step is a no-op and it simply
+// stamps the version, leaving the schema exec that follows to build the tables.
+// Migration 1 drops
 // a legacy CHECK on journal.kind that rejected newer entry kinds (slug_change,
 // ref_rewrite) — the kind is an internal enum written only by this package, so
 // the constraint added maintenance cost without guarding against user input.
