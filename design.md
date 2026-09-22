@@ -88,6 +88,16 @@ correction is not a new event worth logging.
   addressable by its slash-joined heading path (`Design/Storage`). Editing a
   section replaces its content *and subsections*, leaving the rest of the body
   untouched, so an agent can update one part without rewriting the whole body.
+  Beyond replace, sections support **append** (add a block after a section's
+  subsections), **insert** (a new heading before/after a path or as its
+  first/last child, or at document scope), **delete** (a section and its
+  subsections), and **move** (relocate a section with its subsections before or
+  after another heading, levels kept verbatim). These block ops re-seam the body
+  so block boundaries carry exactly one blank line and the body ends in exactly
+  one trailing newline (an emptied body collapses to ``""``). Separately,
+  **body-replace** swaps an exact, unique substring anywhere in the body — a
+  verbatim splice (no seam normalization) that errors if the text is absent or
+  appears more than once.
 - **Sessions:** created on the MCP `initialize` handshake and closed on client
   disconnect, so session boundaries are correct with no hook required. The agent
   may record an end-of-session summary via `session-summary`.

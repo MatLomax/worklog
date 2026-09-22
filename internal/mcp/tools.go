@@ -84,6 +84,27 @@ var toolList = []toolDef{
 		obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path")}, "slug", "path")},
 	{"task-section-set", "Replace one section of a task body, leaving the rest untouched.",
 		obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path"), "content": strp("new section content")}, "slug", "path", "content")},
+	{"task-section-append", "Append a block to the end of a task-body section (after its subsections).",
+		obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path"), "content": strp("block to append")}, "slug", "path", "content")},
+	{"task-section-insert", "Insert a new section into a task body relative to an existing heading path (omit path to target the document).",
+		obj(map[string]any{
+			"slug":     strp("task slug"),
+			"heading":  strp("new heading title"),
+			"position": enumP("where to insert relative to path", "before", "after", "firstChild", "lastChild"),
+			"path":     strp("existing heading path; omit or empty to target the document"),
+			"body":     strp("optional section body"),
+		}, "slug", "heading", "position")},
+	{"task-section-delete", "Delete a task-body section and its subsections.",
+		obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path")}, "slug", "path")},
+	{"task-section-move", "Move a task-body section (with its subsections) before or after another heading path.",
+		obj(map[string]any{
+			"slug":   strp("task slug"),
+			"path":   strp("heading path to move"),
+			"before": strp("move it immediately before this heading path"),
+			"after":  strp("move it immediately after this heading path"),
+		}, "slug", "path")},
+	{"task-body-replace", "Replace an exact, unique substring in a task body (empty replacement removes it); errors if the text is absent or appears more than once.",
+		obj(map[string]any{"slug": strp("task slug"), "old": strp("exact text to find"), "new": strp("replacement text (default empty, which removes it)")}, "slug", "old")},
 	{"task-link", "Attach an external link to a task — a GitHub issue/PR by full URL, a commit, a file, or any URL. Kind is auto-detected from the URL.",
 		obj(map[string]any{
 			"slug":  strp("task slug"),
@@ -347,6 +368,83 @@ var handlers = map[string]handler{
 			return nil, err
 		}
 		t, err := st.SetSection(in.Slug, in.Path, in.Content)
+		if err != nil {
+			return nil, err
+		}
+		return js(t), nil
+	},
+	"task-section-append": func(st *store.Store, a json.RawMessage) ([]string, error) {
+		var in struct {
+			Slug    string `json:"slug"`
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if err := parse(a, &in); err != nil {
+			return nil, err
+		}
+		t, err := st.AppendSection(in.Slug, in.Path, in.Content)
+		if err != nil {
+			return nil, err
+		}
+		return js(t), nil
+	},
+	"task-section-insert": func(st *store.Store, a json.RawMessage) ([]string, error) {
+		var in struct {
+			Slug     string `json:"slug"`
+			Heading  string `json:"heading"`
+			Position string `json:"position"`
+			Path     string `json:"path"`
+			Body     string `json:"body"`
+		}
+		if err := parse(a, &in); err != nil {
+			return nil, err
+		}
+		t, err := st.InsertSection(in.Slug, in.Path, in.Heading, in.Body, in.Position)
+		if err != nil {
+			return nil, err
+		}
+		return js(t), nil
+	},
+	"task-section-delete": func(st *store.Store, a json.RawMessage) ([]string, error) {
+		var in struct {
+			Slug string `json:"slug"`
+			Path string `json:"path"`
+		}
+		if err := parse(a, &in); err != nil {
+			return nil, err
+		}
+		t, err := st.DeleteSection(in.Slug, in.Path)
+		if err != nil {
+			return nil, err
+		}
+		return js(t), nil
+	},
+	"task-section-move": func(st *store.Store, a json.RawMessage) ([]string, error) {
+		var in struct {
+			Slug   string `json:"slug"`
+			Path   string `json:"path"`
+			Before string `json:"before"`
+			After  string `json:"after"`
+		}
+		if err := parse(a, &in); err != nil {
+			return nil, err
+		}
+		t, err := st.MoveSection(in.Slug, in.Path, in.Before, in.After)
+		if err != nil {
+			return nil, err
+		}
+		return js(t), nil
+	},
+	"task-body-replace": func(st *store.Store, a json.RawMessage) ([]string, error) {
+		var in struct {
+			Slug string `json:"slug"`
+			Old  string `json:"old"`
+			New  string `json:"new"`
+		}
+		if err := parse(a, &in); err != nil {
+			return nil, err
+		}
+		t, err := st.ReplaceInBody(in.Slug, in.Old, in.New)
 		if err != nil {
 			return nil, err
 		}

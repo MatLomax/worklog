@@ -402,6 +402,74 @@ func lastJSONBlock(out string) string {
 	return strings.TrimRight(out[idx+1:], "\n")
 }
 
+func TestSectionOpsThroughMCP(t *testing.T) {
+	s := newServer(t)
+	if _, isErr := call(t, s, "task-create", map[string]any{
+		"title": "Plan", "body": "## Goals\ng1\n## Risks\nr1\n",
+	}); isErr {
+		t.Fatal("task-create errored")
+	}
+
+	// Insert a new section after Goals, then append a block to it.
+	if _, isErr := call(t, s, "task-section-insert", map[string]any{
+		"slug": "plan", "path": "Goals", "position": "after", "heading": "Scope", "body": "s1",
+	}); isErr {
+		t.Fatal("task-section-insert errored")
+	}
+	if _, isErr := call(t, s, "task-section-append", map[string]any{
+		"slug": "plan", "path": "Scope", "content": "s2",
+	}); isErr {
+		t.Fatal("task-section-append errored")
+	}
+
+	// Replace an exact substring anywhere in the body.
+	if _, isErr := call(t, s, "task-body-replace", map[string]any{
+		"slug": "plan", "old": "r1", "new": "r1-updated",
+	}); isErr {
+		t.Fatal("task-body-replace errored")
+	}
+
+	body, isErr := call(t, s, "task-get", map[string]any{"slug": "plan"})
+	if isErr {
+		t.Fatalf("task-get errored: %s", body)
+	}
+	for _, want := range []string{"## Scope", "s1", "s2", "r1-updated"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in updated body: %s", want, body)
+		}
+	}
+
+	// Move Scope ahead of Goals through the tool, then confirm the reorder.
+	if _, isErr := call(t, s, "task-section-move", map[string]any{
+		"slug": "plan", "path": "Scope", "before": "Goals",
+	}); isErr {
+		t.Fatal("task-section-move errored")
+	}
+	body, _ = call(t, s, "task-get", map[string]any{"slug": "plan"})
+	if strings.Index(body, "## Scope") > strings.Index(body, "## Goals") {
+		t.Fatalf("Scope should precede Goals after move: %s", body)
+	}
+
+	// An ambiguous replace surfaces as a tool error, not a silent no-op.
+	if _, isErr := call(t, s, "task-create", map[string]any{
+		"title": "Dup", "body": "## A\nx\n## B\nx\n",
+	}); isErr {
+		t.Fatal("task-create Dup errored")
+	}
+	if _, isErr := call(t, s, "task-body-replace", map[string]any{"slug": "dup", "old": "x", "new": "y"}); !isErr {
+		t.Fatal("ambiguous task-body-replace should error")
+	}
+
+	// Delete a section through the tool.
+	if _, isErr := call(t, s, "task-section-delete", map[string]any{"slug": "plan", "path": "Risks"}); isErr {
+		t.Fatal("task-section-delete errored")
+	}
+	body, _ = call(t, s, "task-get", map[string]any{"slug": "plan"})
+	if strings.Contains(body, "## Risks") {
+		t.Fatalf("Risks section not deleted: %s", body)
+	}
+}
+
 func TestUnknownToolIsError(t *testing.T) {
 	s := newServer(t)
 	out, isErr := call(t, s, "no-such-tool", nil)

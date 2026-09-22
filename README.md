@@ -129,6 +129,11 @@ Codex has no SessionStart-style context hook, so to warm-load either call
 | `task-update` | change slug/status/priority/parent/body; done unblocks dependents |
 | `task-add-blocker` / `task-remove-blocker` | add or remove blocking deps on an existing task |
 | `task-toc` / `task-section-get` / `task-section-set` | read/edit one `##` section of a body |
+| `task-section-append` | append a block to the end of a section (after its subsections) |
+| `task-section-insert` | insert a new section relative to a heading path (or the document) |
+| `task-section-delete` | delete a section and its subsections |
+| `task-section-move` | move a section (with subsections) before/after another heading |
+| `task-body-replace` | replace an exact, unique substring anywhere in a body |
 | `task-link` | attach a GitHub issue/PR (full URL), commit, file, or URL |
 | `task-decide` | record a decision + rationale made during execution |
 | `task-journal` | append a freeform note to the running log |
