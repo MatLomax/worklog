@@ -41,6 +41,24 @@ func TestAppendSectionLandsAfterSubsections(t *testing.T) {
 	}
 }
 
+func TestAppendPreservesUnclosedFenceTrailingBlanks(t *testing.T) {
+	s := newStore(t)
+	// Malformed input: the fence is never closed, so its trailing blank lines
+	// are code content, not a section seam, and must survive the append rather
+	// than being trimmed away (the seam normalizer only trims real boundaries).
+	mustCreate(t, s, CreateTaskInput{Title: "Doc", Body: "## A\n```\ncode\n\n\n"})
+	if _, err := s.AppendSection("doc", "A", "new"); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	got := bodyOf(t, s, "doc")
+	if !strings.Contains(got, "code\n\n\n") {
+		t.Fatalf("in-fence blank lines dropped: %q", got)
+	}
+	if !strings.Contains(got, "new") {
+		t.Fatalf("appended content missing: %q", got)
+	}
+}
+
 func TestDeleteSectionCases(t *testing.T) {
 	// Middle section.
 	s := newStore(t)

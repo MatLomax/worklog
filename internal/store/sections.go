@@ -139,15 +139,35 @@ func SetSectionInBody(body, path, content string) (string, bool) {
 // isBlank reports whether a line is empty or whitespace-only.
 func isBlank(s string) bool { return strings.TrimSpace(s) == "" }
 
-// trimBlankEnds drops leading and trailing blank lines from a segment.
+// endsInOpenFence reports whether lines finish inside an unterminated fenced
+// code block. A fence never crosses a heading boundary (parseHeadings ignores
+// fenced `#` lines), so this can only happen with malformed markdown — but when
+// it does, the segment's trailing blank lines are fence content, not seam
+// whitespace, and must not be trimmed away.
+func endsInOpenFence(lines []string) bool {
+	inFence := false
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			inFence = !inFence
+		}
+	}
+	return inFence
+}
+
+// trimBlankEnds drops leading and trailing blank lines from a segment. Trailing
+// blanks are left intact when the segment ends inside an unterminated fence,
+// since there they are code content rather than a block seam.
 func trimBlankEnds(lines []string) []string {
 	start := 0
 	for start < len(lines) && isBlank(lines[start]) {
 		start++
 	}
 	end := len(lines)
-	for end > start && isBlank(lines[end-1]) {
-		end--
+	if !endsInOpenFence(lines[start:]) {
+		for end > start && isBlank(lines[end-1]) {
+			end--
+		}
 	}
 	return lines[start:end]
 }
