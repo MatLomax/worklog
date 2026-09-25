@@ -124,15 +124,19 @@ func (s *Store) CreateTask(in CreateTaskInput) (*Task, error) {
 	// together or not at all: a bad or cycle-forming blocker slug must not leave
 	// an orphan task behind.
 	ts := now()
+	var closedAt sql.NullString
+	if closed(status) {
+		closedAt = sql.NullString{String: ts, Valid: true}
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 	res, err := tx.Exec(
-		`INSERT INTO task (slug, parent_id, title, body_md, status, priority, position, created_at, updated_at)
-		 VALUES (?,?,?,?,?,?,?,?,?)`,
-		slug, parentID, in.Title, in.Body, status, priority, pos, ts, ts)
+		`INSERT INTO task (slug, parent_id, title, body_md, status, priority, position, created_at, updated_at, closed_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		slug, parentID, in.Title, in.Body, status, priority, pos, ts, ts, closedAt)
 	if err != nil {
 		return nil, err
 	}

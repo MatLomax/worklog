@@ -782,3 +782,18 @@ CREATE TABLE journal (
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestCreateTaskStampsClosedAt(t *testing.T) {
+	s := newStore(t)
+	d := mustCreate(t, s, CreateTaskInput{Title: "Done on arrival", Status: "done"})
+	if d.ClosedAt == "" {
+		t.Fatal("create with done did not stamp closed_at")
+	}
+	if d.ClosedAt != d.CreatedAt {
+		t.Fatalf("closed_at = %q, want equal to created_at %q", d.ClosedAt, d.CreatedAt)
+	}
+	p := mustCreate(t, s, CreateTaskInput{Title: "Still pending"})
+	if p.ClosedAt != "" {
+		t.Fatalf("create with pending stamped closed_at = %q, want empty", p.ClosedAt)
+	}
+}
