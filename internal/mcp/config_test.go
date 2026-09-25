@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MatLomax/worklog/internal/store"
 )
@@ -739,12 +740,12 @@ func TestConfigSavesUnderLoadNeverApplyDefaults(t *testing.T) {
 			}
 			content := []byte(configs[i%len(configs)])
 			if i%2 == 0 {
-				if err := os.Remove(cfgFile); err != nil {
+				if err := retrySharing(func() error { return os.Remove(cfgFile) }); err != nil {
 					done <- err
 					return
 				}
 			}
-			if err := os.WriteFile(cfgFile, content, 0o644); err != nil {
+			if err := retrySharing(func() error { return os.WriteFile(cfgFile, content, 0o644) }); err != nil {
 				done <- err
 				return
 			}
@@ -773,6 +774,21 @@ func TestConfigSavesUnderLoadNeverApplyDefaults(t *testing.T) {
 	if len(seen) < 2 {
 		t.Errorf("statuses saved = %v; the writer's edits were never picked up, so the test exercised nothing", seen)
 	}
+}
+
+// retrySharing runs a file operation of the config writer, retrying it
+// briefly while it fails: on Windows, removing or rewriting a file the server
+// has open for reading fails with a sharing violation until the read closes,
+// and an editor saving there retries the same way.
+func retrySharing(op func() error) error {
+	var err error
+	for range 200 {
+		if err = op(); err == nil {
+			return nil
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return err
 }
 
 // defaultsNotePrefix starts the note on a tool result while the config file
