@@ -1,14 +1,13 @@
 package store
 
 import (
-	"fmt"
 	"strings"
 )
 
 // FindOpts constrains a work-find search. Any subset may be set.
 type FindOpts struct {
 	Query        string // free text matched against titles, bodies, decisions, journal, link URLs
-	Status       string // restrict matched tasks to this status
+	Status       string // restrict matched tasks to this status, configured or not
 	Since        string // RFC3339 lower bound on decision/journal timestamps
 	HasDecisions bool   // only tasks that carry at least one decision
 }
@@ -36,8 +35,8 @@ func (s *Store) Find(o FindOpts) (*FindResult, error) {
 		taskArgs = append(taskArgs, like, like, like, like)
 	}
 	if o.Status != "" {
-		if !validStatus(o.Status) {
-			return nil, fmt.Errorf("invalid status %q", o.Status)
+		if err := checkFilter(o.Status); err != nil {
+			return nil, err
 		}
 		taskWhere = append(taskWhere, "status = ?")
 		taskArgs = append(taskArgs, o.Status)
@@ -46,7 +45,7 @@ func (s *Store) Find(o FindOpts) (*FindResult, error) {
 		taskWhere = append(taskWhere, "id IN (SELECT task_id FROM decision)")
 	}
 	if len(taskWhere) > 0 {
-		tasks, err := s.queryTasks(taskCols+" WHERE "+strings.Join(taskWhere, " AND ")+orderBy, taskArgs...)
+		tasks, err := s.queryTasks(taskCols+" WHERE "+strings.Join(taskWhere, " AND ")+s.orderBy(), taskArgs...)
 		if err != nil {
 			return nil, err
 		}

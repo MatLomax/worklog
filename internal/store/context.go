@@ -5,9 +5,32 @@ import (
 	"strings"
 )
 
+// Fixed section headings of the WarmContext briefing, which share the page
+// with one section per configured status.
+const (
+	headingBlocked        = "Blocked"
+	headingRecentActivity = "Recent activity"
+)
+
+// fixedSectionHeadings lists every fixed "## " heading WarmContext writes.
+// Config.Validate rejects a status whose own section heading would equal one.
+var fixedSectionHeadings = []string{headingBlocked, headingRecentActivity}
+
+// leftoverHeadingSuffix marks the section of a status a task still holds but
+// the config no longer lists, so its heading never equals a configured or
+// fixed one and the reader sees why it is not grouped by kind.
+const leftoverHeadingSuffix = " (not in config)"
+
 // WarmContext renders the "where was I" briefing a new session opens with: the
-// next actionable task, in-progress and blocked work, and the tail of the
-// journal so the last session's trail is visible immediately.
+// next actionable task, then the open work grouped by status, then the tail of
+// the journal so the last session's trail is visible immediately.
+//
+// Open work is grouped into one section per active-kind status and then one per
+// open-kind status (each in config order), then "Blocked" (tasks with a
+// blocked-kind status or an unclosed dependency), then one section per status
+// absent from the config that an unclosed task still holds (sorted by name). A
+// dependency-blocked task appears both under its status and under Blocked. A
+// leftover section's heading carries the suffix " (not in config)".
 func (s *Store) WarmContext(journalLimit int) (string, error) {
 	var b strings.Builder
 	b.WriteString("# worklog — open work\n\n")
@@ -20,40 +43,35 @@ func (s *Store) WarmContext(journalLimit int) (string, error) {
 		fmt.Fprintf(&b, "**Next up:** %s (`%s`, priority %d)\n\n", next.Title, next.Slug, next.Priority)
 	}
 
-	inProg, err := s.ListTasks(ListOpts{Status: "in_progress"})
+	open, err := s.ListTasks(ListOpts{})
 	if err != nil {
 		return "", err
 	}
-	if len(inProg) > 0 {
-		b.WriteString("## In progress\n\n")
-		for _, t := range inProg {
-			writeTaskLine(&b, t)
+	cfg := s.statuses().cfg
+	byStatus := map[string][]TaskView{}
+	leftover := map[string][]TaskView{}
+	var blocked []TaskView
+	for _, t := range open {
+		if cfg.Has(t.Status) {
+			byStatus[t.Status] = append(byStatus[t.Status], t)
+		} else {
+			leftover[t.Status] = append(leftover[t.Status], t)
 		}
-		b.WriteString("\n")
+		if cfg.IsBlocked(t.Status) || len(t.Blockers) > 0 {
+			blocked = append(blocked, t)
+		}
 	}
 
-	pending, err := s.ListTasks(ListOpts{Status: "pending"})
-	if err != nil {
-		return "", err
+	listed := false
+	for _, name := range cfg.NamesOfKind(KindActive) {
+		listed = writeSection(&b, statusHeading(name), byStatus[name]) || listed
 	}
-	if len(pending) > 0 {
-		b.WriteString("## Pending\n\n")
-		for _, t := range pending {
-			writeTaskLine(&b, t)
-		}
-		b.WriteString("\n")
+	for _, name := range cfg.NamesOfKind(KindOpen) {
+		listed = writeSection(&b, statusHeading(name), byStatus[name]) || listed
 	}
-
-	blocked, err := s.blockedTasks()
-	if err != nil {
-		return "", err
-	}
-	if len(blocked) > 0 {
-		b.WriteString("## Blocked\n\n")
-		for _, t := range blocked {
-			writeTaskLine(&b, t)
-		}
-		b.WriteString("\n")
+	writeSection(&b, headingBlocked, blocked)
+	for _, name := range sortedKeys(leftover) {
+		listed = writeSection(&b, statusHeading(name)+leftoverHeadingSuffix, leftover[name]) || listed
 	}
 
 	journal, err := s.RecentJournal(journalLimit)
@@ -61,7 +79,7 @@ func (s *Store) WarmContext(journalLimit int) (string, error) {
 		return "", err
 	}
 	if len(journal) > 0 {
-		b.WriteString("## Recent activity\n\n")
+		b.WriteString("## " + headingRecentActivity + "\n\n")
 		for _, e := range journal {
 			slug := ""
 			if e.TaskSlug != "" {
@@ -72,7 +90,7 @@ func (s *Store) WarmContext(journalLimit int) (string, error) {
 		b.WriteString("\n")
 	}
 
-	if next == nil && len(inProg) == 0 && len(pending) == 0 {
+	if next == nil && !listed {
 		b.WriteString("_No open tasks._\n")
 	}
 	return b.String(), nil
@@ -95,20 +113,18 @@ func (s *Store) NextLine() (string, error) {
 	return fmt.Sprintf("worklog next task: %s (P%d)", firstLine(next.Title), next.Priority), nil
 }
 
-// blockedTasks returns tasks that are actively blocked (by status or by an
-// unclosed dependency).
-func (s *Store) blockedTasks() ([]TaskView, error) {
-	all, err := s.ListTasks(ListOpts{})
-	if err != nil {
-		return nil, err
+// writeSection writes a "## heading" section listing tasks, or nothing when
+// tasks is empty; it reports whether it wrote anything.
+func writeSection(b *strings.Builder, heading string, tasks []TaskView) bool {
+	if len(tasks) == 0 {
+		return false
 	}
-	var out []TaskView
-	for _, t := range all {
-		if t.Status == "blocked" || len(t.Blockers) > 0 {
-			out = append(out, t)
-		}
+	b.WriteString("## " + heading + "\n\n")
+	for _, t := range tasks {
+		writeTaskLine(b, t)
 	}
-	return out, nil
+	b.WriteString("\n")
+	return true
 }
 
 func writeTaskLine(b *strings.Builder, t TaskView) {

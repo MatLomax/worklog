@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 
 	"github.com/MatLomax/worklog/internal/mcp"
 	"github.com/MatLomax/worklog/internal/store"
@@ -156,7 +157,9 @@ func cmdSessionEnd(args []string) error {
 	if _, err := os.Stat(path); err != nil {
 		return nil // no database here; nothing to close
 	}
-	st, err := store.Open(path)
+	// Closing a session touches no status, so the project's config is not
+	// read: a bad config.jsonc must not stop the Stop hook closing sessions.
+	st, err := store.OpenWithConfig(path, nil)
 	if err != nil {
 		return err
 	}
@@ -182,12 +185,18 @@ func cmdInit(args []string) error {
 		return err
 	}
 	path := filepath.Join(abs, store.DirName, store.FileName)
-	st, err := store.Open(path)
+	// Creating and migrating the database touches no status, so it runs with
+	// the default statuses and succeeds whatever the config says; an invalid
+	// config is reported as a warning so it is fixed before the tools need it.
+	st, err := store.OpenWithConfig(path, nil)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 	fmt.Println("initialized", path)
+	if _, err := store.LoadConfig(filepath.Dir(path)); err != nil {
+		fmt.Fprintln(os.Stderr, "worklog: warning: invalid config", err)
+	}
 	return nil
 }
 
@@ -218,13 +227,21 @@ func cmdContext(args []string) error {
 	return nil
 }
 
+// badConfigAdvice follows the config error in the session-start
+// additionalContext. It matches the MCP server's reload rule: a server that
+// has had a usable config keeps it while the file is invalid and notes the
+// problem on every result; only one that never had one refuses calls.
+const badConfigAdvice = "Fix the config file: until it is valid, this briefing of open work is unavailable, and worklog tool calls either keep using the statuses already in force (each result noting the invalid file) or, if the server has never loaded a usable config, are refused."
+
 // cmdSessionStart emits the Claude Code SessionStart hook payload in one JSON
 // object over its two independent channels: `hookSpecificOutput.additionalContext`
 // warm-loads the "where was I" briefing into the model's context (invisible to
 // the user), and `systemMessage` shows the next task as a line the user sees
 // (plain stdout would reach only the model). It prints nothing when there is no
 // database yet, so it is safe to wire globally; `systemMessage` is omitted when
-// nothing is actionable.
+// nothing is actionable. An invalid config.jsonc does not fail the hook: the
+// payload instead carries the error, as a one-line `systemMessage` for the user
+// and in `additionalContext` with an instruction to fix the file.
 func cmdSessionStart(args []string) error {
 	fs := flag.NewFlagSet("session-start", flag.ContinueOnError)
 	db := fs.String("db", "", "database path")
@@ -239,7 +256,14 @@ func cmdSessionStart(args []string) error {
 	if _, err := os.Stat(path); err != nil {
 		return nil // no database here yet; nothing to emit
 	}
-	st, err := store.Open(path)
+	cfg, err := store.LoadConfig(filepath.Dir(path))
+	if err != nil {
+		// A parse or validation error leads with the file path; a read error
+		// carries it as the os package reports it (open <path>: ...).
+		msg := strings.Join(strings.Fields("worklog: invalid config "+err.Error()), " ")
+		return emitSessionStart(msg, msg+"\n"+badConfigAdvice)
+	}
+	st, err := store.OpenWithConfig(path, cfg)
 	if err != nil {
 		return err
 	}
@@ -252,15 +276,22 @@ func cmdSessionStart(args []string) error {
 	if err != nil {
 		return err
 	}
+	return emitSessionStart(line, ctx)
+}
+
+// emitSessionStart prints the SessionStart hook payload: systemMessage (shown
+// to the user; omitted when empty) and additionalContext (loaded into the
+// model's context).
+func emitSessionStart(systemMessage, additionalContext string) error {
 	payload := struct {
 		SystemMessage      string `json:"systemMessage,omitempty"`
 		HookSpecificOutput struct {
 			HookEventName     string `json:"hookEventName"`
 			AdditionalContext string `json:"additionalContext,omitempty"`
 		} `json:"hookSpecificOutput"`
-	}{SystemMessage: line}
+	}{SystemMessage: systemMessage}
 	payload.HookSpecificOutput.HookEventName = "SessionStart"
-	payload.HookSpecificOutput.AdditionalContext = ctx
+	payload.HookSpecificOutput.AdditionalContext = additionalContext
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return err

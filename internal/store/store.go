@@ -30,6 +30,9 @@ var ErrNotFound = errors.New("not found")
 type Store struct {
 	db        *sql.DB
 	sessionID int64 // the current agent session, attributed to writes; 0 if none
+	// status is the project's status configuration with its SQL fragments;
+	// SetConfig replaces it whole. nil means the default configuration.
+	status *statusSet
 }
 
 const schema = `
@@ -125,8 +128,31 @@ func Resolve(dir string) (string, error) {
 
 // Open opens (creating if needed) the database at path, applies the schema, and
 // enables WAL so concurrent agent sessions sharing the tree do not clobber each
-// other. Pass ":memory:" for an ephemeral database (tests).
+// other. The status configuration is read from ConfigFileName beside the
+// database (see LoadConfig); a config error fails the open. Pass ":memory:" for
+// an ephemeral database (tests), which uses DefaultConfig.
 func Open(path string) (*Store, error) {
+	cfg := DefaultConfig()
+	if path != ":memory:" {
+		var err error
+		if cfg, err = LoadConfig(filepath.Dir(path)); err != nil {
+			return nil, err
+		}
+	}
+	return OpenWithConfig(path, cfg)
+}
+
+// OpenWithConfig is Open with an explicit status configuration instead of the
+// one beside the database. cfg is validated and copied, so later changes to it
+// do not affect the store; nil means DefaultConfig.
+func OpenWithConfig(path string, cfg *Config) (*Store, error) {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+	st, err := newStatusSet(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
 	if path != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, err
@@ -158,8 +184,11 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, status: st}, nil
 }
+
+// Config returns a copy of the status configuration the store runs with.
+func (s *Store) Config() *Config { return s.statuses().cfg.clone() }
 
 // schemaVersion is the migration level recorded in PRAGMA user_version.
 const schemaVersion = 3

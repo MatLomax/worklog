@@ -64,12 +64,13 @@ func TestToolsListAdvertisesAll(t *testing.T) {
 		t.Fatalf("tools/list: %v", rerr)
 	}
 	tools := res.(map[string]any)["tools"].([]toolDef)
-	if len(tools) != len(toolList) || len(tools) == 0 {
+	if len(tools) != len(toolsFor(store.DefaultConfig())) || len(tools) == 0 {
 		t.Fatalf("advertised %d tools", len(tools))
 	}
 }
 
 func TestEveryAdvertisedToolHasAHandler(t *testing.T) {
+	toolList := toolsFor(store.DefaultConfig())
 	if len(handlers) != len(toolList) {
 		t.Fatalf("handlers=%d toolList=%d — every advertised tool must map 1:1 to a handler", len(handlers), len(toolList))
 	}

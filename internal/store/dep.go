@@ -123,12 +123,13 @@ func blockedByTransitively(x querier, taskID, blockerID int64) (bool, error) {
 }
 
 // ActiveBlockers returns the tasks still blocking the given task — those
-// dependency targets that are not yet closed. A done or dropped dependency no
-// longer blocks and is omitted.
+// dependency targets whose status is not of kind closed. A closed dependency no
+// longer blocks and is omitted; one holding a status absent from the config
+// still blocks.
 func (s *Store) ActiveBlockers(taskID int64) ([]Task, error) {
 	rows, err := s.db.Query(
 		taskCols+` INNER JOIN dep ON dep.blocked_by_id = task.id
-		           WHERE dep.task_id = ? AND task.status NOT IN ('done','dropped')
+		           WHERE dep.task_id = ? AND task.status NOT IN `+s.statuses().closedList+`
 		           ORDER BY task.priority, task.position, task.id`, taskID)
 	if err != nil {
 		return nil, err

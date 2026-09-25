@@ -40,7 +40,7 @@ func (s *Store) Detail(slug string) (*TaskDetail, error) {
 		d.Blockers = append(d.Blockers, b.Slug)
 	}
 
-	kids, err := s.queryTasks(taskCols+" WHERE parent_id = ?"+orderBy, t.ID)
+	kids, err := s.queryTasks(taskCols+" WHERE parent_id = ?"+s.orderBy(), t.ID)
 	if err != nil {
 		return nil, err
 	}

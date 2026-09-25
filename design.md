@@ -44,8 +44,24 @@ clobber each other. Six tables:
 
 - **task** — `id, slug, parent_id, title, body_md, status, priority, position,
   created_at, updated_at, closed_at`. `parent_id` gives the tree; `slug` is the
-  stable external handle. Status ∈ `pending, in_progress, blocked, done,
-  dropped` (aligned with the harness's own task vocabulary).
+  stable external handle. `status` is one of the project's configured statuses,
+  each of a *kind*: `open` (actionable, not started), `active` (actionable,
+  underway), `blocked` (a manual hold) or `closed` (terminal). With no config
+  the statuses are `pending` (open, the default), `in_progress` (active),
+  `blocked` (blocked), `done` and `dropped` (both closed), aligned with the
+  harness's own task vocabulary. An optional `.worklog/config.jsonc` beside the
+  database replaces the list. A store opened on a bad config fails. The MCP
+  server re-reads the file before each call but only ever adopts a complete,
+  valid file: while it is invalid, empty or unreadable, or missing after a
+  file's `statuses` list was loaded, the statuses in force stay (results carry
+  a note); with the defaults in force (no file, or `{}`) a missing file is just
+  the defaults; and only a server that never had usable statuses refuses calls.
+  Session bookkeeping (`session-start`, `session-end`, `init`) never fails on
+  it. The database does not constrain `status` — the app
+  validates it against the config — so tasks keep a status the config no longer
+  lists. `closed_at` is stamped whenever a task is created with, or set to, a
+  closed status, and cleared when it is set to any other; a config edit sets no
+  status, so it is left as it was even if that status stops being closed.
 - **dep** — `(task_id, blocked_by_id)` blocking edges.
 - **link** — a task's external artifacts. `kind ∈ github_issue, github_pr,
   commit, file, url`, auto-detected from the URL, storing the *full* URL so
@@ -78,18 +94,28 @@ correction is not a new event worth logging.
 ## Semantics worth stating
 
 - **Blocking:** a task is actively blocked if it has a
-  dependency that is not yet closed, or an explicit `blocked` status. Closing a
-  dependency (`done`/`dropped`) automatically unblocks its dependents — a closed
-  blocker is omitted from the dependent's blocker list. A blocking edge may
+  dependency whose status is not of kind `closed`, or a status of kind
+  `blocked`. Closing a dependency (setting any `closed`-kind status)
+  automatically unblocks its dependents — a closed blocker is omitted from the
+  dependent's blocker list. A blocking edge may
   never form a cycle: an edge whose blocker is already blocked (directly or
   transitively) by the task is rejected, so the dependency graph stays a DAG and
   no pair of tasks can deadlock each other out of the actionable order. A
   multi-blocker add or remove — and a task created with blockers — applies as
   one transaction: a single unresolvable, self-blocking, or cycle-forming slug
   rolls back the whole batch, so the edge set never lands half-applied.
-- **Actionable order:** unblocked before blocked, then priority (1 highest),
+- **Actionable order:** unblocked before held (blocked, or holding a status the
+  config no longer lists), then priority (1 highest),
   then sibling position, then id. `task-next` returns the first actionable
-  (`pending`/`in_progress`, no active blockers) task.
+  (status of kind `open` or `active`, no active blockers) task.
+- **Leftover statuses:** a status removed from the config stays on the tasks
+  that hold it. It counts as neither closed nor actionable — such a task still
+  blocks its dependents and still appears in lists — and it can't be set on
+  create or update, but list/find status filters accept any well-formed name so
+  these tasks stay reachable. The session briefing gives each leftover status
+  its own section after Blocked, sorted by name and headed with a
+  `(not in config)` suffix so it can never collide with a configured or fixed
+  section.
 - **Sections:** a task body is markdown; headings form a tree, and a section is
   addressable by its slash-joined heading path (`Design/Storage`). Editing a
   section replaces its content *and subsections*, leaving the rest of the body
@@ -120,8 +146,9 @@ correction is not a new event worth logging.
 
 1. **SessionStart** (Claude Code hook) runs one command, `worklog session-start`,
    which emits a single JSON payload over the hook's two independent channels.
-   `hookSpecificOutput.additionalContext` injects open + in-progress tasks, their
-   blockers, and the recent journal tail into the model's context — the session
+   `hookSpecificOutput.additionalContext` injects open work grouped by status
+   (active kinds, then open kinds, then Blocked), their blockers, and the recent
+   journal tail into the model's context — the session
    opens warm, but this channel is invisible to the user. `systemMessage` — the
    one SessionStart channel shown to the *user* — carries the next task as a
    visible line. Folding both into one command keeps the plugin's hook wiring a

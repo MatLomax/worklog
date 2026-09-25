@@ -14,24 +14,32 @@ type TaskView struct {
 	Actionable bool     `json:"actionable"`
 }
 
-// activeBlockedExpr is a SQL predicate that is true when a task is held up,
-// either by an unclosed dependency or by an explicit "blocked" status.
-const activeBlockedExpr = `(
-  status = 'blocked' OR EXISTS (
+// heldExpr is a SQL predicate that is true when a task cannot be worked on
+// now: its status is of kind blocked, or is absent from the config (a leftover,
+// which is never actionable), or it has a dependency whose status is not of
+// kind closed. It only orders results; Blocked-section membership and
+// TaskView.Actionable are decided in Go.
+func (s *Store) heldExpr() string {
+	st := s.statuses()
+	return `(
+  status IN ` + st.blockedList + ` OR status NOT IN ` + st.configuredList + ` OR EXISTS (
     SELECT 1 FROM dep d JOIN task b ON b.id = d.blocked_by_id
-    WHERE d.task_id = task.id AND b.status NOT IN ('done','dropped')
+    WHERE d.task_id = task.id AND b.status NOT IN ` + st.closedList + `
   )
 )`
+}
 
-// orderBy sorts actionable work first: unblocked before blocked, then by
-// priority (1 highest), then sibling position, then id.
-const orderBy = ` ORDER BY ` + activeBlockedExpr + `, priority, position, id`
+// orderBy sorts workable tasks first: those not held (see heldExpr) before
+// held ones, then by priority (1 highest), then sibling position, then id.
+func (s *Store) orderBy() string {
+	return ` ORDER BY ` + s.heldExpr() + `, priority, position, id`
+}
 
 // ListOpts filters ListTasks.
 type ListOpts struct {
-	Status        string // exact status filter; empty for any
+	Status        string // exact status filter, configured or not; empty for any
 	Parent        string // parent slug; "" for any parent
-	IncludeClosed bool   // when false, done/dropped tasks are omitted
+	IncludeClosed bool   // when false (and Status is empty), closed-kind tasks are omitted
 }
 
 // ListTasks returns tasks in actionable order.
@@ -39,13 +47,13 @@ func (s *Store) ListTasks(o ListOpts) ([]TaskView, error) {
 	where := []string{"1=1"}
 	var args []any
 	if o.Status != "" {
-		if !validStatus(o.Status) {
-			return nil, fmt.Errorf("invalid status %q", o.Status)
+		if err := checkFilter(o.Status); err != nil {
+			return nil, err
 		}
 		where = append(where, "status = ?")
 		args = append(args, o.Status)
 	} else if !o.IncludeClosed {
-		where = append(where, "status NOT IN ('done','dropped')")
+		where = append(where, "status NOT IN "+s.statuses().closedList)
 	}
 	if o.Parent != "" {
 		p, err := s.taskBySlug(o.Parent)
@@ -55,7 +63,7 @@ func (s *Store) ListTasks(o ListOpts) ([]TaskView, error) {
 		where = append(where, "parent_id = ?")
 		args = append(args, p.ID)
 	}
-	tasks, err := s.queryTasks(taskCols+" WHERE "+strings.Join(where, " AND ")+orderBy, args...)
+	tasks, err := s.queryTasks(taskCols+" WHERE "+strings.Join(where, " AND ")+s.orderBy(), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -99,12 +107,13 @@ func (s *Store) view(t Task) (TaskView, error) {
 	}
 	var children int
 	s.db.QueryRow(`SELECT COUNT(*) FROM task WHERE parent_id = ?`, t.ID).Scan(&children)
-	actionable := (t.Status == "pending" || t.Status == "in_progress") && len(blockers) == 0
+	actionable := s.statuses().cfg.IsActionable(t.Status) && len(blockers) == 0
 	return TaskView{Task: t, Blockers: slugs, ChildCount: children, Actionable: actionable}, nil
 }
 
-// NextTask returns the highest-priority actionable task — pending or
-// in_progress, with no active blockers — or nil when nothing is actionable.
+// NextTask returns the highest-priority actionable task — one whose status is
+// of kind open or active, with no active blockers — or nil when nothing is
+// actionable.
 func (s *Store) NextTask() (*TaskView, error) {
 	views, err := s.ListTasks(ListOpts{})
 	if err != nil {
@@ -140,7 +149,7 @@ func (s *Store) Tree(rootSlug string) ([]TreeNode, error) {
 		}
 		return []TreeNode{node}, nil
 	}
-	tasks, err := s.queryTasks(taskCols + " WHERE parent_id IS NULL" + orderBy)
+	tasks, err := s.queryTasks(taskCols + " WHERE parent_id IS NULL" + s.orderBy())
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +162,7 @@ func (s *Store) treeNode(t Task) (TreeNode, error) {
 	if err != nil {
 		return TreeNode{}, err
 	}
-	kids, err := s.queryTasks(taskCols+" WHERE parent_id = ?"+orderBy, t.ID)
+	kids, err := s.queryTasks(taskCols+" WHERE parent_id = ?"+s.orderBy(), t.ID)
 	if err != nil {
 		return TreeNode{}, err
 	}

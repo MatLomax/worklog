@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/MatLomax/worklog/internal/store"
 )
@@ -32,115 +34,145 @@ type toolDef struct {
 	InputSchema map[string]any `json:"inputSchema"`
 }
 
-var statusEnum = []string{"pending", "in_progress", "blocked", "done", "dropped"}
+// statusFilterP is the schema of a status filter parameter. It is an open
+// string rather than an enum of the configured names: a filter also matches
+// tasks still holding a status saved before the config dropped it, so any
+// well-formed status name is accepted.
+func statusFilterP(desc string, cfg *store.Config) map[string]any {
+	return map[string]any{
+		"type":        "string",
+		"description": desc + " (configured: " + strings.Join(cfg.Names(), ", ") + "; a status saved before a config change is also accepted)",
+		"pattern":     store.StatusNamePattern,
+	}
+}
 
-// toolList is advertised via tools/list; handlers maps each name to its impl.
-var toolList = []toolDef{
-	{"task-list", "List tasks in actionable order (unblocked first, then by priority). Closed tasks are hidden unless include_closed is set.",
-		obj(map[string]any{
-			"status":         enumP("filter to one status", statusEnum...),
-			"parent":         strp("only children of this task slug"),
-			"include_closed": boolP("include done/dropped tasks"),
-		})},
-	{"task-get", "Full detail for one task: body, active blockers, subtasks, links, decisions, and recent journal — rendered as markdown and JSON.",
-		obj(map[string]any{"slug": strp("task slug")}, "slug")},
-	{"task-next", "The single highest-priority actionable task (pending/in_progress with no active blockers).", obj(map[string]any{})},
-	{"task-tree", "The task forest, or the subtree under a given slug, nested with children.",
-		obj(map[string]any{"slug": strp("root task slug; omit for the whole forest")})},
-	{"task-create", "Create a task, optionally under a parent, with blocking dependencies.",
-		obj(map[string]any{
-			"title":      strp("task title"),
-			"slug":       strp("explicit slug; derived from the title when omitted"),
-			"parent":     strp("parent task slug"),
-			"body":       strp("markdown body (use ## sections)"),
-			"status":     enumP("initial status (default pending)", statusEnum...),
-			"priority":   intP("1 (highest) to 5 (lowest); default 3"),
-			"blocked_by": arrP("slugs of tasks that block this one"),
-		}, "title")},
-	{"task-update", "Update a task's fields. Setting status to done/dropped stamps its close time and unblocks dependents.",
-		obj(map[string]any{
-			"slug":     strp("task slug"),
-			"new_slug": strp("rename the task's slug; normalized like a created slug, and must not collide with an existing task"),
-			"title":    strp("new title"),
-			"status":   enumP("new status", statusEnum...),
-			"priority": intP("new priority 1-5"),
-			"position": intP("new sibling position"),
-			"parent":   strp("new parent slug; empty string detaches to top level"),
-			"body":     strp("replace the full markdown body"),
-		}, "slug")},
-	{"task-add-blocker", "Add one or more blocking dependencies to an existing task — it stays blocked until each blocker is done or dropped.",
-		obj(map[string]any{
-			"slug":       strp("task slug"),
-			"blocked_by": arrP("slugs of tasks that block this one"),
-		}, "slug", "blocked_by")},
-	{"task-remove-blocker", "Remove one or more blocking dependencies from a task. Both the task and each named blocker must exist; an edge that isn't set is a no-op.",
-		obj(map[string]any{
-			"slug":       strp("task slug"),
-			"blocked_by": arrP("slugs of blocking tasks to detach"),
-		}, "slug", "blocked_by")},
-	{"task-toc", "List the ## section paths within a task's body.",
-		obj(map[string]any{"slug": strp("task slug")}, "slug")},
-	{"task-section-get", "Read one section of a task body by heading path (e.g. \"Design/Storage\").",
-		obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path")}, "slug", "path")},
-	{"task-section-set", "Replace one section of a task body, leaving the rest untouched.",
-		obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path"), "content": strp("new section content")}, "slug", "path", "content")},
-	{"task-section-append", "Append a block to the end of a task-body section (after its subsections).",
-		obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path"), "content": strp("block to append")}, "slug", "path", "content")},
-	{"task-section-insert", "Insert a new section into a task body relative to an existing heading path (omit path to target the document).",
-		obj(map[string]any{
-			"slug":     strp("task slug"),
-			"heading":  strp("new heading title"),
-			"position": enumP("where to insert relative to path", "before", "after", "firstChild", "lastChild"),
-			"path":     strp("existing heading path; omit or empty to target the document"),
-			"body":     strp("optional section body"),
-		}, "slug", "heading", "position")},
-	{"task-section-delete", "Delete a task-body section and its subsections.",
-		obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path")}, "slug", "path")},
-	{"task-section-move", "Move a task-body section (with its subsections) before or after another heading path.",
-		obj(map[string]any{
-			"slug":   strp("task slug"),
-			"path":   strp("heading path to move"),
-			"before": strp("move it immediately before this heading path"),
-			"after":  strp("move it immediately after this heading path"),
-		}, "slug", "path")},
-	{"task-body-replace", "Replace an exact, unique substring in a task body (empty replacement removes it); errors if the text is absent or appears more than once.",
-		obj(map[string]any{"slug": strp("task slug"), "old": strp("exact text to find"), "new": strp("replacement text (default empty, which removes it)")}, "slug", "old")},
-	{"task-link", "Attach an external link to a task — a GitHub issue/PR by full URL, a commit, a file, or any URL. Kind is auto-detected from the URL.",
-		obj(map[string]any{
-			"slug":  strp("task slug"),
-			"url":   strp("full URL (e.g. https://github.com/org/repo/issues/412)"),
-			"kind":  enumP("override the detected kind", "github_issue", "github_pr", "commit", "file", "url"),
-			"label": strp("short label"),
-		}, "slug", "url")},
-	{"task-decide", "Record a decision made while executing a task — what was chosen and why. Kept as a queryable record and shown under the task's Decisions section.",
-		obj(map[string]any{
-			"slug":      strp("task slug"),
-			"decision":  strp("the decision made"),
-			"rationale": strp("why (optional)"),
-		}, "slug", "decision")},
-	{"task-journal", "Append a freeform note to the running log, optionally against a task.",
-		obj(map[string]any{"slug": strp("task slug; omit for a project-level note"), "note": strp("the note")}, "note")},
-	{"record-edit", "Correct a decision or journal entry in place: replace one markdown field of an existing record by id. Does not append a journal correction.",
-		obj(map[string]any{
-			"kind":    enumP("record kind", "decision", "journal"),
-			"id":      intP("record id"),
-			"field":   strp("field to replace: \"decision\" or \"rationale\" for a decision, \"text\" for a journal entry"),
-			"content": strp("new markdown content"),
-		}, "kind", "id", "field", "content")},
-	{"record-delete", "Delete a decision or journal entry by id.",
-		obj(map[string]any{
-			"kind": enumP("record kind", "decision", "journal"),
-			"id":   intP("record id"),
-		}, "kind", "id")},
-	{"work-find", "Search tasks, decisions, and the journal — for finding what was done and decided, not just what's open.",
-		obj(map[string]any{
-			"query":         strp("free text matched against titles, bodies, decisions, journal, and link URLs"),
-			"status":        enumP("restrict matched tasks to this status", statusEnum...),
-			"since":         strp("RFC3339 lower bound on decision/journal timestamps"),
-			"has_decisions": boolP("only tasks that carry a decision"),
-		})},
-	{"session-summary", "Close the current session with a summary of what it accomplished, for the next session to read.",
-		obj(map[string]any{"summary": strp("what this session did")}, "summary")},
+// orList joins names as prose alternatives: "a", "a or b", "a, b, or c".
+func orList(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " or " + names[1]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + ", or " + names[len(names)-1]
+}
+
+// toolsFor returns the tool list advertised via tools/list for a project's
+// status configuration: status enums and the descriptions that name statuses
+// are rendered from cfg. handlers maps each tool name to its impl.
+func toolsFor(cfg *store.Config) []toolDef {
+	closed := cfg.NamesOfKind(store.KindClosed)
+	actionable := cfg.NamesOfKind(store.KindOpen, store.KindActive)
+	statuses := cfg.Names()
+	return []toolDef{
+		{"task-list", "List tasks in actionable order (unblocked first, then by priority). Closed tasks are hidden unless include_closed is set.",
+			obj(map[string]any{
+				"status":         statusFilterP("filter to one status", cfg),
+				"parent":         strp("only children of this task slug"),
+				"include_closed": boolP("include " + strings.Join(closed, "/") + " tasks"),
+			})},
+		{"task-get", "Full detail for one task: body, active blockers, subtasks, links, decisions, and recent journal — rendered as markdown and JSON.",
+			obj(map[string]any{"slug": strp("task slug")}, "slug")},
+		{"task-next", "The single highest-priority actionable task (" + strings.Join(actionable, "/") + " with no active blockers).", obj(map[string]any{})},
+		{"task-tree", "The task forest, or the subtree under a given slug, nested with children.",
+			obj(map[string]any{"slug": strp("root task slug; omit for the whole forest")})},
+		{"task-create", "Create a task, optionally under a parent, with blocking dependencies.",
+			obj(map[string]any{
+				"title":      strp("task title"),
+				"slug":       strp("explicit slug; derived from the title when omitted"),
+				"parent":     strp("parent task slug"),
+				"body":       strp("markdown body (use ## sections)"),
+				"status":     enumP("initial status (default "+cfg.DefaultStatus()+")", statuses...),
+				"priority":   intP("1 (highest) to 5 (lowest); default 3"),
+				"blocked_by": arrP("slugs of tasks that block this one"),
+			}, "title")},
+		{"task-update", "Update a task's fields. Setting status to " + strings.Join(closed, "/") + " stamps its close time and unblocks dependents.",
+			obj(map[string]any{
+				"slug":     strp("task slug"),
+				"new_slug": strp("rename the task's slug; normalized like a created slug, and must not collide with an existing task"),
+				"title":    strp("new title"),
+				"status":   enumP("new status", statuses...),
+				"priority": intP("new priority 1-5"),
+				"position": intP("new sibling position"),
+				"parent":   strp("new parent slug; empty string detaches to top level"),
+				"body":     strp("replace the full markdown body"),
+			}, "slug")},
+		{"task-add-blocker", "Add one or more blocking dependencies to an existing task — it stays blocked until each blocker is " + orList(closed) + ".",
+			obj(map[string]any{
+				"slug":       strp("task slug"),
+				"blocked_by": arrP("slugs of tasks that block this one"),
+			}, "slug", "blocked_by")},
+		{"task-remove-blocker", "Remove one or more blocking dependencies from a task. Both the task and each named blocker must exist; an edge that isn't set is a no-op.",
+			obj(map[string]any{
+				"slug":       strp("task slug"),
+				"blocked_by": arrP("slugs of blocking tasks to detach"),
+			}, "slug", "blocked_by")},
+		{"task-toc", "List the ## section paths within a task's body.",
+			obj(map[string]any{"slug": strp("task slug")}, "slug")},
+		{"task-section-get", "Read one section of a task body by heading path (e.g. \"Design/Storage\").",
+			obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path")}, "slug", "path")},
+		{"task-section-set", "Replace one section of a task body, leaving the rest untouched.",
+			obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path"), "content": strp("new section content")}, "slug", "path", "content")},
+		{"task-section-append", "Append a block to the end of a task-body section (after its subsections).",
+			obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path"), "content": strp("block to append")}, "slug", "path", "content")},
+		{"task-section-insert", "Insert a new section into a task body relative to an existing heading path (omit path to target the document).",
+			obj(map[string]any{
+				"slug":     strp("task slug"),
+				"heading":  strp("new heading title"),
+				"position": enumP("where to insert relative to path", "before", "after", "firstChild", "lastChild"),
+				"path":     strp("existing heading path; omit or empty to target the document"),
+				"body":     strp("optional section body"),
+			}, "slug", "heading", "position")},
+		{"task-section-delete", "Delete a task-body section and its subsections.",
+			obj(map[string]any{"slug": strp("task slug"), "path": strp("heading path")}, "slug", "path")},
+		{"task-section-move", "Move a task-body section (with its subsections) before or after another heading path.",
+			obj(map[string]any{
+				"slug":   strp("task slug"),
+				"path":   strp("heading path to move"),
+				"before": strp("move it immediately before this heading path"),
+				"after":  strp("move it immediately after this heading path"),
+			}, "slug", "path")},
+		{"task-body-replace", "Replace an exact, unique substring in a task body (empty replacement removes it); errors if the text is absent or appears more than once.",
+			obj(map[string]any{"slug": strp("task slug"), "old": strp("exact text to find"), "new": strp("replacement text (default empty, which removes it)")}, "slug", "old")},
+		{"task-link", "Attach an external link to a task — a GitHub issue/PR by full URL, a commit, a file, or any URL. Kind is auto-detected from the URL.",
+			obj(map[string]any{
+				"slug":  strp("task slug"),
+				"url":   strp("full URL (e.g. https://github.com/org/repo/issues/412)"),
+				"kind":  enumP("override the detected kind", "github_issue", "github_pr", "commit", "file", "url"),
+				"label": strp("short label"),
+			}, "slug", "url")},
+		{"task-decide", "Record a decision made while executing a task — what was chosen and why. Kept as a queryable record and shown under the task's Decisions section.",
+			obj(map[string]any{
+				"slug":      strp("task slug"),
+				"decision":  strp("the decision made"),
+				"rationale": strp("why (optional)"),
+			}, "slug", "decision")},
+		{"task-journal", "Append a freeform note to the running log, optionally against a task.",
+			obj(map[string]any{"slug": strp("task slug; omit for a project-level note"), "note": strp("the note")}, "note")},
+		{"record-edit", "Correct a decision or journal entry in place: replace one markdown field of an existing record by id. Does not append a journal correction.",
+			obj(map[string]any{
+				"kind":    enumP("record kind", "decision", "journal"),
+				"id":      intP("record id"),
+				"field":   strp("field to replace: \"decision\" or \"rationale\" for a decision, \"text\" for a journal entry"),
+				"content": strp("new markdown content"),
+			}, "kind", "id", "field", "content")},
+		{"record-delete", "Delete a decision or journal entry by id.",
+			obj(map[string]any{
+				"kind": enumP("record kind", "decision", "journal"),
+				"id":   intP("record id"),
+			}, "kind", "id")},
+		{"work-find", "Search tasks, decisions, and the journal — for finding what was done and decided, not just what's open.",
+			obj(map[string]any{
+				"query":         strp("free text matched against titles, bodies, decisions, journal, and link URLs"),
+				"status":        statusFilterP("restrict matched tasks to this status", cfg),
+				"since":         strp("RFC3339 lower bound on decision/journal timestamps"),
+				"has_decisions": boolP("only tasks that carry a decision"),
+			})},
+		{"session-summary", "Close the current session with a summary of what it accomplished, for the next session to read.",
+			obj(map[string]any{"summary": strp("what this session did")}, "summary")},
+	}
 }
 
 // --- dispatch --------------------------------------------------------------
@@ -153,19 +185,34 @@ func (s *Server) toolsCall(params json.RawMessage) (any, *rpcError) {
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &rpcError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
-	st, ok := s.store()
-	if !ok {
+	s.syncConfig()
+	st, err := s.store()
+	if errors.Is(err, errNoDB) {
 		return errorResult(noDBMessage), nil
 	}
-	h, ok := handlers[p.Name]
-	if !ok {
-		return errorResult("unknown tool: " + p.Name), nil
-	}
-	blocks, err := h(st, p.Arguments)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
-	return textResult(blocks, false), nil
+	h, ok := handlers[p.Name]
+	if !ok {
+		return s.withConfigNote([]string{"unknown tool: " + p.Name}, true), nil
+	}
+	blocks, err := h(st, p.Arguments)
+	if err != nil {
+		return s.withConfigNote([]string{err.Error()}, true), nil
+	}
+	return s.withConfigNote(blocks, false), nil
+}
+
+// withConfigNote is textResult with, while the config file has a problem
+// (invalid, unreadable or removed) but an earlier configuration is in force,
+// the config note appended as a final text block of its own, so the call's own
+// output is unchanged.
+func (s *Server) withConfigNote(blocks []string, isError bool) any {
+	if note := s.configNote(); note != "" {
+		blocks = append(blocks, note)
+	}
+	return textResult(blocks, isError)
 }
 
 func textResult(blocks []string, isError bool) any {
@@ -231,7 +278,7 @@ var handlers = map[string]handler{
 			return nil, err
 		}
 		if n == nil {
-			return []string{"No actionable task — everything is blocked, done, or there are no tasks."}, nil
+			return []string{"No actionable task — every unclosed task is on hold or waiting on a blocker, or there are none."}, nil
 		}
 		return js(n), nil
 	},

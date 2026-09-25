@@ -7,11 +7,6 @@ import (
 	"strings"
 )
 
-// Statuses are the five values a task may hold, aligned with the harness's own
-// task vocabulary. "blocked" is a manual override; blocking is also computed
-// from dependency edges (see ActiveBlockers).
-var Statuses = []string{"pending", "in_progress", "blocked", "done", "dropped"}
-
 // Task is one node in the work tree.
 type Task struct {
 	ID        int64  `json:"id"`
@@ -26,10 +21,6 @@ type Task struct {
 	UpdatedAt string `json:"updated_at"`
 	ClosedAt  string `json:"closed_at,omitempty"`
 }
-
-// closed reports whether a status counts as terminal — a closed task no longer
-// blocks its dependents.
-func closed(status string) bool { return status == "done" || status == "dropped" }
 
 var slugStrip = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -73,20 +64,21 @@ type CreateTaskInput struct {
 	Slug      string // optional; derived from Title when empty
 	Parent    string // optional parent slug
 	Body      string
-	Status    string // optional; defaults to pending
+	Status    string // optional; defaults to the configured default status
 	Priority  int    // optional; defaults to 3
 	BlockedBy []string
 }
 
 // CreateTask inserts a task, optionally under a parent and with blocking edges,
-// and records a "created" journal entry.
+// and records a "created" journal entry. Its status must be a configured one.
 func (s *Store) CreateTask(in CreateTaskInput) (*Task, error) {
+	st := s.statuses()
 	status := in.Status
 	if status == "" {
-		status = "pending"
+		status = st.cfg.DefaultStatus()
 	}
-	if !validStatus(status) {
-		return nil, fmt.Errorf("invalid status %q", status)
+	if err := st.checkSettable(status); err != nil {
+		return nil, err
 	}
 	priority := in.Priority
 	if priority == 0 {
@@ -125,7 +117,7 @@ func (s *Store) CreateTask(in CreateTaskInput) (*Task, error) {
 	// an orphan task behind.
 	ts := now()
 	var closedAt sql.NullString
-	if closed(status) {
+	if st.cfg.IsClosed(status) {
 		closedAt = sql.NullString{String: ts, Valid: true}
 	}
 	tx, err := s.db.Begin()
@@ -199,8 +191,10 @@ type UpdateTaskInput struct {
 	Body     *string
 }
 
-// UpdateTask applies a partial update. A status change to a terminal value
-// stamps closed_at (and clears it when reopened), and is journaled.
+// UpdateTask applies a partial update. A new status must be a configured one;
+// setting a closed-kind status stamps closed_at, setting any other clears it,
+// and a change of status is journaled. A task whose saved status is no longer
+// configured keeps it, and its other fields stay editable.
 func (s *Store) UpdateTask(in UpdateTaskInput) (*Task, error) {
 	t, err := s.taskBySlug(in.Slug)
 	if err != nil {
@@ -265,15 +259,15 @@ func (s *Store) UpdateTask(in UpdateTaskInput) (*Task, error) {
 	}
 	var statusChange string
 	if in.Status != nil {
-		if !validStatus(*in.Status) {
-			return nil, fmt.Errorf("invalid status %q", *in.Status)
+		if err := s.statuses().checkSettable(*in.Status); err != nil {
+			return nil, err
 		}
 		if *in.Status != t.Status {
 			statusChange = fmt.Sprintf("%s → %s", t.Status, *in.Status)
 		}
 		sets = append(sets, "status = ?")
 		args = append(args, *in.Status)
-		if closed(*in.Status) {
+		if s.statuses().cfg.IsClosed(*in.Status) {
 			sets = append(sets, "closed_at = ?")
 			args = append(args, now())
 		} else {
@@ -359,13 +353,4 @@ func (s *Store) rewriteBodyRefs(x querier, oldSlug, newSlug string) error {
 		}
 	}
 	return nil
-}
-
-func validStatus(s string) bool {
-	for _, v := range Statuses {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
